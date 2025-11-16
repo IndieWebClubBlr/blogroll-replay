@@ -18,8 +18,9 @@ let
     hashable
   ]);
   build-script = pkgs.writeScriptBin "build" ''
-    #!/bin/sh
-    nix-build .
+  #!/bin/sh
+  LEVEL=''${1:-0}
+    nix-build . --arg optimizationLevel $LEVEL
   '';
   run-script = pkgs.writeScriptBin "run" ''
     #!/bin/sh
