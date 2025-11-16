@@ -55,19 +55,21 @@ itemToAtomEntry item = case item of
   _ -> do
     let title = Feed.getItemTitle item
         link = Feed.getItemLink item
-        pubDate = join $ (Feed.getItemPublishDate item :: Maybe (Maybe UTCTime))
+        pubDate = join (Feed.getItemPublishDate item :: Maybe (Maybe UTCTime))
         desc = Feed.getItemDescription item
         entryId = fromMaybe "" link
         entryTitle = Atom.TextString $ fromMaybe "" title
-        entryUpdated = T.pack $ fromMaybe "" $ iso8601Show <$> pubDate
-    let entry = (Atom.nullEntry entryId entryTitle entryUpdated)
-          { Atom.entryLinks = [Atom.nullLink $ fromMaybe "" link],
-            Atom.entryContent = Atom.HTMLContent <$> desc
-          }
-    if T.null (Atom.entryId entry) then do
-      uuid <- nextRandom
-      return entry { Atom.entryId = T.pack $ "urn:uuid:" <> show uuid }
-    else return entry
+        entryUpdated = T.pack $ maybe "" iso8601Show pubDate
+    let entry =
+          (Atom.nullEntry entryId entryTitle entryUpdated)
+            { Atom.entryLinks = [Atom.nullLink $ fromMaybe "" link],
+              Atom.entryContent = Atom.HTMLContent <$> desc
+            }
+    if T.null (Atom.entryId entry)
+      then do
+        uuid <- nextRandom
+        return entry {Atom.entryId = T.pack $ "urn:uuid:" <> show uuid}
+      else return entry
 
 feedToAtom :: Feed.Feed -> IO Atom.Feed
 feedToAtom feed = do
@@ -79,7 +81,7 @@ feedToAtom feed = do
       feedUpdated = fromMaybe "" pubDate
       baseFeed = Atom.nullFeed feedId feedTitle feedUpdated
   entries <- mapM itemToAtomEntry (Feed.getFeedItems feed)
-  return baseFeed { Atom.feedEntries = entries, Atom.feedLinks = [Atom.nullLink feedId] }
+  return baseFeed {Atom.feedEntries = entries, Atom.feedLinks = [Atom.nullLink feedId]}
 
 data Config = Config
   { source :: String,
@@ -106,9 +108,13 @@ main = do
         )
   createResult <- try $ createDirectoryIfMissing True (outputDir options)
   case createResult of
-    Left e -> logMsg Error $ "Failed to create output directory: " <> displayException (e :: IOException)
+    Left e ->
+      logMsg Error $
+        "Failed to create output directory: " <> displayException (e :: IOException)
     Right _ -> do
-      result <- Yaml.decodeFileEither (configPath options) :: IO (Either Yaml.ParseException [Config])
+      result <-
+        Yaml.decodeFileEither (configPath options) ::
+          IO (Either Yaml.ParseException [Config])
       case result of
         Left err -> logMsg Error $ "Error reading config: " <> show err
         Right configs -> do
@@ -158,7 +164,7 @@ select k es ws acc = do
   let total = sum ws
   r <- randomRIO (0, total)
   let cumulative = scanl (+) 0 ws
-  let idx = min (length es - 1) $ maybe 0 id $ findIndex (> r) cumulative
+  let idx = min (length es - 1) $ fromMaybe 0 $ findIndex (> r) cumulative
   let selected = es !! idx
   let newEs = take idx es <> drop (idx + 1) es
   let newWs = take idx ws <> drop (idx + 1) ws
@@ -176,11 +182,13 @@ processConfig config outputDir = do
       outputFeedResult <- readOutputFile outputDir outputPath
       case outputFeedResult of
         Left err -> logMsg Debug $ "Failed to read existing feed: " <> err
-        Right outputFeed -> logMsg Debug $ "Read existing feed with " <> show (length $ Atom.feedEntries outputFeed) <> " entries"
+        Right outputFeed ->
+          logMsg Debug $
+            "Read existing feed with " <> show (length $ Atom.feedEntries outputFeed) <> " entries"
       mergedFeed <- case outputFeedResult of
         Left _ -> return sourceFeed
         Right outputFeed -> mergeFeeds sourceFeed outputFeed
-      allEntries <- return $ Atom.feedEntries mergedFeed
+      let allEntries = Atom.feedEntries mergedFeed
       logMsg Debug $ "Merged feed has " <> show (length allEntries) <> " entries"
       selectedEntries <- selectEntries (repeatEntryCount config) allEntries
       logMsg Debug $ "Selected " <> show (length selectedEntries) <> " entries for repetition"
@@ -190,12 +198,18 @@ processConfig config outputDir = do
         uuid <- nextRandom
         let newId = T.pack $ "urn:uuid:" <> show uuid
         return e {Atom.entryId = newId, Atom.entryUpdated = timestampString}
-      logMsg Debug $ "Assigned UUIDs and updated timestamps to selected entries"
+      logMsg Debug "Assigned UUIDs and updated timestamps to selected entries"
       outputEntries <- case outputFeedResult of
         Left _ -> return []
         Right outputFeed -> return $ Atom.feedEntries outputFeed
       let combinedEntries = timestampedSelectedEntries ++ outputEntries
-      logMsg Debug $ "Combined entries: " <> show (length timestampedSelectedEntries) <> " new + " <> show (length outputEntries) <> " existing = " <> show (length combinedEntries)
+      logMsg Debug $
+        "Combined entries: "
+          <> show (length timestampedSelectedEntries)
+          <> " new + "
+          <> show (length outputEntries)
+          <> " existing = "
+          <> show (length combinedEntries)
       resultFeed <- case outputFeedResult of
         Left _ -> return mergedFeed {Atom.feedEntries = combinedEntries}
         Right outputFeed -> return outputFeed {Atom.feedEntries = combinedEntries}
@@ -205,7 +219,13 @@ processConfig config outputDir = do
           writeResult <- try $ writeFile (outputDir </> outputPath) (TL.unpack txt)
           case writeResult of
             Left e -> logMsg Error $ "Failed to write output file: " <> displayException (e :: IOException)
-            Right _ -> logMsg Info $ "Processed " <> source config <> " successfully, wrote " <> show (length combinedEntries) <> " entries"
+            Right _ ->
+              logMsg Info $
+                "Processed "
+                  <> source config
+                  <> " successfully, wrote "
+                  <> show (length combinedEntries)
+                  <> " entries"
 
 saveFeed :: Bool -> String -> IO (Either String Atom.Feed)
 saveFeed cache url = do
@@ -270,9 +290,17 @@ readOutputFile dir name = do
       return . Left $
         "File error reading " <> filePath <> ": " <> displayException (e :: IOException)
     Right body -> case Feed.parseFeedString body of
-      Nothing -> return $ Left $ "Failed to parse Atom file " <> filePath <> ", content start: " <> take 200 body
+      Nothing ->
+        return $
+          Left $
+            "Failed to parse Atom file " <> filePath <> ", content start: " <> take 200 body
       Just feed -> case feed of
         Feed.AtomFeed af -> do
-          logMsg Debug $ "Parsed feed with " <> show (length $ Feed.getFeedItems $ Feed.AtomFeed af) <> " items, " <> show (length $ Atom.feedEntries af) <> " entries"
+          logMsg Debug $
+            "Parsed feed with "
+              <> show (length $ Feed.getFeedItems $ Feed.AtomFeed af)
+              <> " items, "
+              <> show (length $ Atom.feedEntries af)
+              <> " entries"
           return $ Right af
         _ -> return $ Left $ "File is not Atom: " <> filePath
