@@ -15,17 +15,24 @@ import Data.ByteString.Lazy qualified as BS
 import Data.Either (isRight)
 import Data.Hashable (hash)
 import Data.List (findIndex, nubBy, sortBy)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe, maybeToList)
 import Data.Ord (Down (..), comparing)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Text.IO.Utf8 qualified as Utf8
 import Data.Text.Lazy qualified as TL
-import Data.Time (NominalDiffTime, UTCTime(..), diffUTCTime, getCurrentTime, getCurrentTimeZone, utcToLocalTime)
+import Data.Time
+  ( NominalDiffTime,
+    UTCTime (..),
+    diffUTCTime,
+    getCurrentTime,
+    getCurrentTimeZone,
+    utcToLocalTime,
+  )
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM, rfc822DateFormat)
 import Data.Time.Format.ISO8601 (iso8601Show)
-import Data.UUID.V4 (nextRandom)
+import Data.UUID.V4 qualified as UUID
 import Data.Yaml qualified as Yaml
 import GHC.Generics (Generic)
 import Network.HTTP.Client qualified as HTTP
@@ -43,10 +50,17 @@ import Text.Feed.Query qualified as Feed
 import Text.Feed.Types qualified as Feed
 import Prelude hiding (writeFile)
 
--- TODO
--- 4. validate feed conversion logic
--- 6. Add support for JSON feeds
-
+-- | This module implements a feed repeater tool that processes RSS/Atom feeds.
+--
+-- It reads a YAML configuration file containing feed sources with settings for caching,
+-- output filenames, and repetition parameters.
+--
+-- For each valid feed, it fetches the latest entries, filters out entries newer than the
+-- minimum age threshold, and selects a random subset for repetition based on weighted
+-- sampling where older entries have higher probability (using exponential decay with a
+-- configurable half-life).
+--
+-- Selected entries are assigned new timestamps and UUIDs, and added to the output file.
 data LogLevel = ERR | WRN | INF | DBG deriving (Show)
 
 data FeedTask = FeedTask
@@ -115,7 +129,7 @@ run Options {..} =
     Right tasks | null tasks -> logMsg ERR "No tasks found in file" >> exitFailure
     Right tasks -> do
       validationResults <- forM tasks $ \c@FeedTask {..} -> do
-        res <- try $ HTTP.parseRequest sourceFeedUrl :: IO (Either HTTP.HttpException HTTP.Request)
+        res <- try @HTTP.HttpException $ HTTP.parseRequest sourceFeedUrl
         return (c, isRight res)
       let validTasks = map fst $ filter snd validationResults
       let invalidTasks = map fst $ filter (not . snd) validationResults
@@ -144,7 +158,8 @@ runTask FeedTask {..} outputDir cacheDir = do
       fetchCacheFeed cacheSourceFeed sourceFeedUrl cacheDir >>= \case
         Left err -> logMsg ERR $ "Error fetching feed: " <> err
         Right sourceFeed -> do
-          logMsg DBG $ "Fetched feed with " <> show (length $ Atom.feedEntries sourceFeed) <> " entries"
+          logMsg DBG $
+            "Fetched feed with " <> show (length $ Atom.feedEntries sourceFeed) <> " entries"
           mergedFeed <- case outputFeedResult of
             Left err -> logMsg DBG ("Failed to read output feed: " <> err) >> return sourceFeed
             Right outputFeed -> return $ mergeFeeds sourceFeed outputFeed
@@ -158,8 +173,8 @@ runTask FeedTask {..} outputDir cacheDir = do
             selectEntries repeatedEntryCount minAgeSeconds allEntries
               >>= traverse
                 ( \e -> do
-                    uuid <- nextRandom
-                    return e {Atom.entryId = T.pack $ "urn:uuid:" <> show uuid, Atom.entryUpdated = timestamp}
+                    entryId <- mkUuidUrn
+                    return e {Atom.entryId = entryId, Atom.entryUpdated = timestamp}
                 )
           logMsg DBG $ "Selected " <> show (length selectedEntries) <> " entries for repetition"
 
@@ -185,8 +200,12 @@ runTask FeedTask {..} outputDir cacheDir = do
             Nothing -> logMsg ERR $ "Failed to render feed for: " <> sourceFeedUrl
             Just txt -> do
               try (writeFile outputPath txt) >>= \case
-                Left (e :: IOException) -> logMsg ERR $ "Failed to write output file: " <> displayException e
+                Left (e :: IOException) ->
+                  logMsg ERR $ "Failed to write output file: " <> displayException e
                 Right _ -> logMsg INF $ "Processed " <> sourceFeedUrl <> " successfully"
+
+mkUuidUrn :: IO T.Text
+mkUuidUrn = T.pack . ("urn:uuid:" <>) . show <$> UUID.nextRandom
 
 fetchCacheFeed :: Bool -> String -> FilePath -> IO (Either String Atom.Feed)
 fetchCacheFeed cache url cacheDir = do
@@ -211,7 +230,8 @@ fetchCacheFeed cache url cacheDir = do
           Nothing -> logMsg WRN $ "Failed to export feed for URL: " <> url
           Just txt -> do
             try (writeFile filePath txt) >>= \case
-              Left (e :: IOException) -> logMsg WRN $ "Failed to write cache file: " <> displayException e
+              Left (e :: IOException) ->
+                logMsg WRN $ "Failed to write cache file: " <> displayException e
               Right _ -> logMsg INF $ "Cached " <> filePath <> " for URL: " <> url
 
       return $ Right mergedFeed
@@ -224,7 +244,8 @@ fetchFeed url =
       let request' =
             request
               { HTTP.responseTimeout = HTTP.responseTimeoutMicro requestTimeoutMicros,
-                HTTP.requestHeaders = HTTP.requestHeaders request <> [(HTTP.hUserAgent, "feed-repeat")]
+                HTTP.requestHeaders =
+                  HTTP.requestHeaders request <> [(HTTP.hUserAgent, "feed-repeat")]
               }
       try (HTTP.httpLBS request') >>= \case
         Left (e :: HTTP.HttpException) -> return $ Left $ "HTTP error: " <> displayException e
@@ -232,44 +253,86 @@ fetchFeed url =
           let body = TL.fromStrict $ TE.decodeUtf8Lenient $ BS.toStrict $ HTTP.getResponseBody response
           case Feed.parseFeedSource body of
             Nothing -> return $ Left $ "Failed to parse feed: " <> url
-            Just feed -> Right <$> feedToAtom feed
+            Just feed ->
+              feedToAtom feed >>= \case
+                Nothing -> return $ Left $ "Failed to convert feed: " <> url
+                Just atomFeed -> return $ Right atomFeed
   where
     requestTimeoutMicros = 30_000_000 -- 30 sec
 
-feedToAtom :: Feed.Feed -> IO Atom.Feed
+feedToAtom :: Feed.Feed -> IO (Maybe Atom.Feed)
+feedToAtom (Feed.AtomFeed af) = return $ Just af
 feedToAtom feed = do
+  feedUuid <- mkUuidUrn
+  now <- getCurrentTime
+  entries <-
+    sortBy (comparing (Down . Atom.entryUpdated))
+      <$> traverse (itemToAtomEntry now) (Feed.getFeedItems feed)
   let title = Feed.getFeedTitle feed
       link = Feed.getFeedHome feed
-      pubDate = Feed.getFeedPubDate feed
       updateDate = Feed.getFeedLastUpdate feed
-      feedId = fromMaybe "" link
-      feedTitle = Atom.TextString title
-      feedUpdated = fromMaybe "" (updateDate <|> pubDate)
-      baseFeed = Atom.nullFeed feedId feedTitle feedUpdated
-  entries <- mapM itemToAtomEntry (Feed.getFeedItems feed)
-  return baseFeed {Atom.feedEntries = entries, Atom.feedLinks = [Atom.nullLink feedId]}
+      pubDate = Feed.getFeedPubDate feed
+      feedId = fromMaybe feedUuid link
+      mFeedUpdated = updateDate <|> pubDate <|> listToMaybe (map Atom.entryUpdated entries)
+  case mFeedUpdated of
+    Nothing -> return Nothing
+    Just feedUpdated -> do
+      return . Just $
+        (Atom.nullFeed feedId (Atom.TextString title) feedUpdated)
+          { Atom.feedEntries = entries,
+            Atom.feedAuthors =
+              maybeToList . fmap (\name -> Atom.nullPerson {Atom.personName = name}) $
+                Feed.getFeedAuthor feed,
+            Atom.feedCategories =
+              map (\(term, scheme) -> (Atom.newCategory term) {Atom.catScheme = scheme}) $
+                Feed.getFeedCategories feed,
+            Atom.feedLogo = Feed.getFeedLogoLink feed,
+            Atom.feedGenerator = Atom.nullGenerator <$> Feed.getFeedGenerator feed,
+            Atom.feedLinks =
+              concat . maybeToList $
+                (singleton . mkLink "self" <$> link)
+                  <> (singleton . mkLink "alternate" <$> Feed.getFeedHTML feed)
+          }
   where
-    itemToAtomEntry :: Feed.Item -> IO Atom.Entry
-    itemToAtomEntry item = case item of
+    singleton x = [x]
+    mkLink rel url = (Atom.nullLink url) {Atom.linkRel = Just $ Left rel}
+
+    itemToAtomEntry :: UTCTime -> Feed.Item -> IO Atom.Entry
+    itemToAtomEntry now item = case item of
       Feed.AtomItem atomEntry -> return atomEntry
       _ -> do
+        entryUuid <- mkUuidUrn
         let title = Feed.getItemTitle item
+            itemId = snd <$> Feed.getItemId item
             link = Feed.getItemLink item
-            pubDate = join (Feed.getItemPublishDate item :: Maybe (Maybe UTCTime))
-            desc = Feed.getItemDescription item
-            entryId = fromMaybe "" link
+            pubDate = join (Feed.getItemPublishDate @UTCTime item)
+            entryId = fromMaybe entryUuid (itemId <|> link)
             entryTitle = Atom.TextString $ fromMaybe "" title
-            entryUpdated = T.pack $ maybe "" iso8601Show pubDate
-        let entry =
-              (Atom.nullEntry entryId entryTitle entryUpdated)
-                { Atom.entryLinks = [Atom.nullLink $ fromMaybe "" link],
-                  Atom.entryContent = Atom.HTMLContent <$> desc
-                }
-        if T.null (Atom.entryId entry)
-          then do
-            uuid <- nextRandom
-            return entry {Atom.entryId = T.pack $ "urn:uuid:" <> show uuid}
-          else return entry
+            entryUpdated = T.pack $ iso8601Show $ fromMaybe now pubDate
+        return
+          (Atom.nullEntry entryId entryTitle entryUpdated)
+            { Atom.entryAuthors =
+                maybeToList . fmap (\name -> Atom.nullPerson {Atom.personName = name}) $
+                  Feed.getItemAuthor item,
+              Atom.entryCategories = map Atom.newCategory $ Feed.getItemCategories item,
+              Atom.entryContent = Atom.HTMLContent <$> Feed.getItemContent item,
+              Atom.entryLinks =
+                concat . maybeToList $
+                  (singleton . mkLink "alternate" <$> link)
+                    <> (singleton . mkLink "replies" <$> Feed.getItemCommentLink item)
+                    <> ( ( \(url, typ, len) ->
+                             [ (mkLink "enclosure" url)
+                                 { Atom.linkType = typ,
+                                   Atom.linkLength = T.pack . show <$> len
+                                 }
+                             ]
+                         )
+                           <$> Feed.getItemEnclosure item
+                       ),
+              Atom.entryPublished = Just entryUpdated,
+              Atom.entryRights = Atom.HTMLString <$> Feed.getItemRights item,
+              Atom.entrySummary = Atom.HTMLString <$> Feed.getItemSummary item
+            }
 
 mergeFeeds :: Atom.Feed -> Atom.Feed -> Atom.Feed
 mergeFeeds feed1 feed2 =
