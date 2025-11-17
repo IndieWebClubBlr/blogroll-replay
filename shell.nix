@@ -24,7 +24,7 @@ let
   '';
   run-script = pkgs.writeScriptBin "run" ''
     #!/bin/sh
-    ./result/bin/feed-repeat --config config.yaml --output-dir output/
+    ./result/bin/feed-repeat --config config.yaml --output-dir output --cache-dir cache
   '';
 in
 
