@@ -1,4 +1,4 @@
-{ pkgs ? import <nixpkgs> {} }:
+{ pkgs ? import (import ./nixpkgs.nix) {} }:
 
 let
   ghc = pkgs.haskellPackages.ghcWithPackages (ps: with ps; [

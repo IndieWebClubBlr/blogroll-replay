@@ -1,4 +1,4 @@
-{ pkgs ? import <nixpkgs> {}, optimizationLevel ? 2 }:
+{ pkgs ? import (import ./nixpkgs.nix) {}, optimizationLevel ? 2 }:
 
 let
   ghc = pkgs.haskellPackages.ghcWithPackages (ps: with ps; [
@@ -24,7 +24,6 @@ pkgs.stdenv.mkDerivation {
   src = ./.;
   buildInputs = [ ghc ];
   buildPhase = ''
-  echo "Building with: ghc --make Main.hs -o feed-repeat -O${toString optimizationLevel} -Wall -Werror"
   ghc --make Main.hs -o feed-repeat -O${toString optimizationLevel} -Wall -Werror
   '';
   installPhase = ''

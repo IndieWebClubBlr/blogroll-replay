@@ -4,6 +4,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE Strict #-}
 
 module Main where
 
@@ -11,7 +12,8 @@ import Control.Applicative ((<|>))
 import Control.Exception (IOException, displayException, try)
 import Control.Monad (forM, join, mplus, when)
 import Data.Aeson qualified as Aeson
-import Data.ByteString.Lazy qualified as BS
+import Data.ByteString qualified as BS
+import Data.ByteString.Lazy qualified as LBS
 import Data.Either (isRight)
 import Data.Hashable (hash)
 import Data.List (findIndex, nubBy, sortBy)
@@ -19,7 +21,6 @@ import Data.Maybe (fromMaybe, listToMaybe, maybeToList)
 import Data.Ord (Down (..), comparing)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
-import Data.Text.IO.Utf8 qualified as Utf8
 import Data.Text.Lazy qualified as TL
 import Data.Time
   ( NominalDiffTime,
@@ -250,7 +251,7 @@ fetchFeed url =
       try (HTTP.httpLBS request') >>= \case
         Left (e :: HTTP.HttpException) -> return $ Left $ "HTTP error: " <> displayException e
         Right response -> do
-          let body = TL.fromStrict $ TE.decodeUtf8Lenient $ BS.toStrict $ HTTP.getResponseBody response
+          let body = TL.fromStrict $ TE.decodeUtf8Lenient $ LBS.toStrict $ HTTP.getResponseBody response
           case Feed.parseFeedSource body of
             Nothing -> return $ Left $ "Failed to parse feed: " <> url
             Just feed ->
@@ -407,7 +408,7 @@ logMsg level msg = do
 writeFile :: FilePath -> TL.Text -> IO ()
 writeFile fp content = do
   let tmpFP = fp <> ".tmp"
-  Utf8.writeFile tmpFP $ TL.toStrict content
+  BS.writeFile tmpFP . TE.encodeUtf8 $ TL.toStrict content
   renameFile tmpFP fp
 
 parseDate :: T.Text -> Maybe UTCTime
