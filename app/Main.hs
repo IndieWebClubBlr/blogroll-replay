@@ -1,9 +1,9 @@
 {-# LANGUAGE GHC2021 #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE Strict #-}
 
 module Main where
@@ -15,9 +15,9 @@ import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import Data.Either (isRight)
-import Data.Hashable (hash)
+import Data.Hashable (Hashable, hash)
 import Data.List (findIndex, nubBy, sortBy)
-import Data.Maybe (fromMaybe, listToMaybe, maybeToList)
+import Data.Maybe (catMaybes, fromMaybe, listToMaybe, maybeToList)
 import Data.Ord (Down (..), comparing)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
@@ -64,14 +64,19 @@ import Prelude hiding (writeFile)
 -- Selected entries are assigned new timestamps and UUIDs, and added to the output file.
 data LogLevel = ERR | WRN | INF | DBG deriving (Show)
 
+newtype URL = URL String
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (Aeson.FromJSON, Hashable)
+
 data FeedTask = FeedTask
-  { sourceFeedUrl :: String,
+  { sourceFeedUrl :: URL,
     outputFilename :: String,
     cacheSourceFeed :: Bool,
     repeatedEntryCount :: Int,
     minimumEntryAgeDays :: Int
   }
-  deriving (Show, Eq, Generic, Aeson.FromJSON)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (Aeson.FromJSON)
 
 data Options = Options
   { configPath :: FilePath,
@@ -81,7 +86,7 @@ data Options = Options
 
 main :: IO ()
 main = do
-  options@Options {..} <-
+  options <-
     Opt.execParser $
       Opt.info
         optionsParser
@@ -89,12 +94,12 @@ main = do
             <> Opt.progDesc "feed-repeat repeats entries of given feeds into new feeds"
             <> Opt.header "feed-repeat"
         )
-  try (createDirectoryIfMissing True outputDir) >>= \case
+  try (createDirectoryIfMissing True options.outputDir) >>= \case
     Left (e :: IOException) -> do
       logMsg ERR $ "Failed to create output directory: " <> displayException e
       exitFailure
     Right _ ->
-      try (createDirectoryIfMissing True cacheDir) >>= \case
+      try (createDirectoryIfMissing True options.cacheDir) >>= \case
         Left (e :: IOException) -> do
           logMsg ERR $ "Failed to create cache directory: " <> displayException e
           exitFailure
@@ -122,94 +127,109 @@ optionsParser =
       Opt.<**> Opt.helper
 
 run :: Options -> IO ()
-run Options {..} =
-  Yaml.decodeFileEither configPath >>= \case
+run options =
+  Yaml.decodeFileEither options.configPath >>= \case
     Left err -> do
       logMsg ERR $ "Error reading config: " <> show err
       exitFailure
     Right tasks | null tasks -> logMsg ERR "No tasks found in file" >> exitFailure
     Right tasks -> do
-      validationResults <- forM tasks $ \c@FeedTask {..} -> do
-        res <- try @HTTP.HttpException $ HTTP.parseRequest sourceFeedUrl
-        return (c, isRight res)
+      validationResults <- forM tasks $ \task -> do
+        let URL url = task.sourceFeedUrl
+        res <- try @HTTP.HttpException $ HTTP.parseRequest url
+        return (task, isRight res)
       let validTasks = map fst $ filter snd validationResults
       let invalidTasks = map fst $ filter (not . snd) validationResults
       if not (null invalidTasks)
         then do
           logMsg ERR "Invalid source feed URLs in tasks:"
-          mapM_ (\FeedTask {..} -> logMsg ERR $ "  " <> sourceFeedUrl) invalidTasks
+          mapM_ (\c -> let URL url = c.sourceFeedUrl in logMsg ERR $ "  " <> url) invalidTasks
           exitFailure
-        else mapM_ (\c -> runTask c outputDir cacheDir) validTasks
+        else mapM_ (\c -> runTask c options.outputDir options.cacheDir) validTasks
 
 minRunGapSeconds :: NominalDiffTime
 minRunGapSeconds = 86400 -- one day
 
 runTask :: FeedTask -> FilePath -> FilePath -> IO ()
-runTask FeedTask {..} outputDir cacheDir = do
-  logMsg DBG $ "Processing: " <> sourceFeedUrl
+runTask task outputDir cacheDir = do
+  let URL url = task.sourceFeedUrl
+  logMsg DBG $ "Processing: " <> url
   now <- getCurrentTime
-  let outputPath = outputDir </> outputFilename <> ".atom"
+  let outputPath = outputDir </> task.outputFilename <> ".atom"
   outputFeedResult <- parseAtomFile outputPath
   let outputFeedUpdated = case outputFeedResult of
         Left _ -> UTCTime (fromGregorian 2000 1 1) 0
         Right outputFeed -> fromMaybe now $ parseDate $ Atom.feedUpdated outputFeed
   if diffUTCTime now outputFeedUpdated < minRunGapSeconds
-    then logMsg INF $ "Skipping run for URL: " <> sourceFeedUrl
+    then logMsg INF $ "Skipping run for URL: " <> url
     else
-      fetchCacheFeed cacheSourceFeed sourceFeedUrl cacheDir >>= \case
+      fetchCacheFeed task.cacheSourceFeed task.sourceFeedUrl cacheDir >>= \case
         Left err -> logMsg ERR $ "Error fetching feed: " <> err
         Right sourceFeed -> do
           logMsg DBG $
             "Fetched feed with " <> show (length $ Atom.feedEntries sourceFeed) <> " entries"
-          mergedFeed <- case outputFeedResult of
-            Left err -> logMsg DBG ("Failed to read output feed: " <> err) >> return sourceFeed
-            Right outputFeed -> return $ mergeFeeds sourceFeed outputFeed
+          processSourceFeed task outputFeedResult sourceFeed outputDir
 
-          let allEntries = Atom.feedEntries mergedFeed
-          logMsg DBG $ "Merged feed has " <> show (length allEntries) <> " entries"
+processSourceFeed :: FeedTask -> Either String Atom.Feed -> Atom.Feed -> FilePath -> IO ()
+processSourceFeed task outputFeedResult sourceFeed outputDir = do
+  -- merge source and output feeds
+  mergedFeed <- case outputFeedResult of
+    Left err -> logMsg DBG ("Failed to read output feed: " <> err) >> return sourceFeed
+    Right outputFeed -> return $ mergeFeeds sourceFeed outputFeed
 
-          let timestamp = T.pack $ iso8601Show now
-              minAgeSeconds = fromIntegral minimumEntryAgeDays * 86400
-          selectedEntries <-
-            selectEntries repeatedEntryCount minAgeSeconds allEntries
-              >>= traverse
-                ( \e -> do
-                    entryId <- mkUuidUrn
-                    return e {Atom.entryId = entryId, Atom.entryUpdated = timestamp}
-                )
-          logMsg DBG $ "Selected " <> show (length selectedEntries) <> " entries for repetition"
+  let allEntries = Atom.feedEntries mergedFeed
+  logMsg DBG $ "Merged feed has " <> show (length allEntries) <> " entries"
 
-          let outputFeedEntries = case outputFeedResult of
-                Left _ -> []
-                Right outputFeed -> Atom.feedEntries outputFeed
-          let combinedEntries = selectedEntries <> outputFeedEntries
-          logMsg DBG $
-            "Combined entries: "
-              <> (show (length selectedEntries) <> " new + ")
-              <> (show (length outputFeedEntries) <> " existing = ")
-              <> show (length combinedEntries)
+  -- select entries
+  now <- getCurrentTime
+  let timestamp = T.pack $ iso8601Show now
+      minAgeSeconds = fromIntegral task.minimumEntryAgeDays * 86400
+  selectedEntries <-
+    selectEntries task.repeatedEntryCount minAgeSeconds allEntries
+      >>= traverse
+        ( \e -> do
+            entryId <- mkUuidUrn
+            return e {Atom.entryId = entryId, Atom.entryUpdated = timestamp}
+        )
+  logMsg DBG $ "Selected " <> show (length selectedEntries) <> " entries for repetition"
 
-          let resultFeed' = case outputFeedResult of
-                Left _ -> sourceFeed
-                Right outputFeed -> outputFeed
-              resultFeed =
-                resultFeed'
-                  { Atom.feedUpdated = T.pack $ iso8601Show now,
-                    Atom.feedEntries = combinedEntries
-                  }
-          case Feed.textFeed (Feed.AtomFeed resultFeed) of
-            Nothing -> logMsg ERR $ "Failed to render feed for: " <> sourceFeedUrl
-            Just txt -> do
-              try (writeFile outputPath txt) >>= \case
-                Left (e :: IOException) ->
-                  logMsg ERR $ "Failed to write output file: " <> displayException e
-                Right _ -> logMsg INF $ "Processed " <> sourceFeedUrl <> " successfully"
+  -- merge entries
+  let outputFeedEntries = case outputFeedResult of
+        Left _ -> []
+        Right outputFeed -> Atom.feedEntries outputFeed
+  let combinedEntries = selectedEntries <> outputFeedEntries
+  logMsg DBG $
+    "Combined entries: "
+      <> (show (length selectedEntries) <> " new + ")
+      <> (show (length outputFeedEntries) <> " existing = ")
+      <> show (length combinedEntries)
+
+  -- create new output feed
+  let resultFeed' = case outputFeedResult of
+        Left _ -> sourceFeed
+        Right outputFeed -> outputFeed
+      resultFeed =
+        resultFeed'
+          { Atom.feedUpdated = T.pack $ iso8601Show now,
+            Atom.feedEntries = combinedEntries
+          }
+
+  -- write new output feed
+  let URL url = task.sourceFeedUrl
+  case Feed.textFeed (Feed.AtomFeed resultFeed) of
+    Nothing -> logMsg ERR $ "Failed to render feed for: " <> url
+    Just txt -> do
+      let outputPath = outputDir </> task.outputFilename <> ".atom"
+      try (writeFile outputPath txt) >>= \case
+        Left (e :: IOException) ->
+          logMsg ERR $ "Failed to write output file: " <> displayException e
+        Right _ -> logMsg INF $ "Processed " <> url <> " successfully"
 
 mkUuidUrn :: IO T.Text
 mkUuidUrn = T.pack . ("urn:uuid:" <>) . show <$> UUID.nextRandom
 
-fetchCacheFeed :: Bool -> String -> FilePath -> IO (Either String Atom.Feed)
-fetchCacheFeed cache url cacheDir = do
+fetchCacheFeed :: Bool -> URL -> FilePath -> IO (Either String Atom.Feed)
+fetchCacheFeed cache (URL url) cacheDir = do
   let fileName = show (hash url) <> ".atom"
       filePath = cacheDir </> fileName
   fetchFeed url >>= \case
@@ -275,10 +295,10 @@ feedToAtom feed = do
       pubDate = Feed.getFeedPubDate feed
       feedId = fromMaybe feedUuid link
       mFeedUpdated = updateDate <|> pubDate <|> listToMaybe (map Atom.entryUpdated entries)
-  case mFeedUpdated of
-    Nothing -> return Nothing
-    Just feedUpdated -> do
-      return . Just $
+  return $ case mFeedUpdated of
+    Nothing -> Nothing
+    Just feedUpdated ->
+      Just $
         (Atom.nullFeed feedId (Atom.TextString title) feedUpdated)
           { Atom.feedEntries = entries,
             Atom.feedAuthors =
@@ -289,14 +309,11 @@ feedToAtom feed = do
                 Feed.getFeedCategories feed,
             Atom.feedLogo = Feed.getFeedLogoLink feed,
             Atom.feedGenerator = Atom.nullGenerator <$> Feed.getFeedGenerator feed,
-            Atom.feedLinks =
-              concat . maybeToList $
-                (singleton . mkLink "self" <$> link)
-                  <> (singleton . mkLink "alternate" <$> Feed.getFeedHTML feed)
+            Atom.feedLinks = mkLinks [("self", link), ("alternate", Feed.getFeedHTML feed)]
           }
   where
-    singleton x = [x]
     mkLink rel url = (Atom.nullLink url) {Atom.linkRel = Just $ Left rel}
+    mkLinks relsUrls = catMaybes $ map (\(rel, mUrl) -> mkLink rel <$> mUrl) relsUrls
 
     itemToAtomEntry :: UTCTime -> Feed.Item -> IO Atom.Entry
     itemToAtomEntry now item = case item of
@@ -318,18 +335,16 @@ feedToAtom feed = do
               Atom.entryCategories = map Atom.newCategory $ Feed.getItemCategories item,
               Atom.entryContent = Atom.HTMLContent <$> Feed.getItemContent item,
               Atom.entryLinks =
-                concat . maybeToList $
-                  (singleton . mkLink "alternate" <$> link)
-                    <> (singleton . mkLink "replies" <$> Feed.getItemCommentLink item)
-                    <> ( ( \(url, typ, len) ->
-                             [ (mkLink "enclosure" url)
-                                 { Atom.linkType = typ,
-                                   Atom.linkLength = T.pack . show <$> len
-                                 }
-                             ]
-                         )
-                           <$> Feed.getItemEnclosure item
-                       ),
+                mkLinks [("alternate", link), ("replies", Feed.getItemCommentLink item)]
+                  <> maybeToList
+                    ( ( \(url, typ, len) ->
+                          (mkLink "enclosure" url)
+                            { Atom.linkType = typ,
+                              Atom.linkLength = T.pack . show <$> len
+                            }
+                      )
+                        <$> Feed.getItemEnclosure item
+                    ),
               Atom.entryPublished = Just entryUpdated,
               Atom.entryRights = Atom.HTMLString <$> Feed.getItemRights item,
               Atom.entrySummary = Atom.HTMLString <$> Feed.getItemSummary item
@@ -371,6 +386,7 @@ selectEntries n minAgeSeconds entries = do
 
     select :: Int -> [Atom.Entry] -> [Double] -> [Atom.Entry] -> IO [Atom.Entry]
     select 0 _ _ acc = return acc
+    select _ [] _ _ = return []
     select k es ws acc = do
       let total = sum ws
       r <- randomRIO (0, total)
