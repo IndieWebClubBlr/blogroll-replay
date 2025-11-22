@@ -1,5 +1,7 @@
 packages: *.cabal
 
+tests: True
+
 package *
   test-show-details: direct
   ghc-options:
