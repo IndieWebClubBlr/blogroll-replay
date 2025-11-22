@@ -1,35 +1,29 @@
-{-# LANGUAGE GHC2021 #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE Strict #-}
 
 module Main where
 
 import Control.Applicative ((<|>))
-import Control.Exception (IOException, displayException, try)
-import Control.Monad (forM, join, mplus, when)
+import Control.Exception (Exception, IOException, displayException, try)
+import Control.Monad (forM, forM_, join, mplus, when, (>=>))
+import Control.Monad.Except (ExceptT, catchError, liftEither, runExceptT, throwError)
+import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.Reader (ReaderT, ask, runReaderT)
 import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as BS
-import Data.ByteString.Lazy qualified as LBS
 import Data.Either (isRight)
+import Data.Either.Combinators (mapLeft, maybeToRight)
+import Data.Foldable (traverse_)
 import Data.Hashable (Hashable, hash)
 import Data.List (nubBy, sortBy)
-import Data.Maybe (catMaybes, fromMaybe, listToMaybe, maybeToList)
+import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, maybeToList)
 import Data.Ord (Down (..), comparing)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Text.Lazy qualified as TL
-import Data.Time
-  ( NominalDiffTime,
-    UTCTime (..),
-    diffUTCTime,
-    getCurrentTime,
-    getCurrentTimeZone,
-    utcToLocalTime,
-  )
+import Data.Time (UTCTime (..), diffUTCTime, getCurrentTime, getCurrentTimeZone, utcToLocalTime)
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM, rfc822DateFormat)
 import Data.Time.Format.ISO8601 (iso8601Show)
@@ -84,6 +78,34 @@ data Options = Options
     cacheDir :: FilePath
   }
 
+data AppError
+  = IOError IOException
+  | FeedParseError FilePath
+  | FeedRenderError FilePath
+  | InvalidFormatError String FilePath
+  | InvalidFeedUpdatedError
+  | HTTPError HTTP.HttpException
+
+instance Show AppError where
+  show = \case
+    IOError err -> "Failed to read/write file " <> displayException err
+    FeedParseError filePath -> "Failed to parse: " <> filePath
+    FeedRenderError filePath -> "Failed to render: " <> filePath
+    InvalidFormatError format filePath -> "File is not in " <> format <> " format: " <> filePath
+    InvalidFeedUpdatedError -> "Feed updated date absent"
+    HTTPError err -> "HTTP error: " <> displayException err
+
+type App a = ExceptT AppError (ReaderT Options IO) a
+
+minRunGapDays :: Int
+minRunGapDays = 1
+
+selectWeightDoublingDays :: Double
+selectWeightDoublingDays = 7
+
+requestTimeoutMicros :: Int
+requestTimeoutMicros = 30_000_000 -- 30 sec
+
 main :: IO ()
 main = do
   options <-
@@ -94,16 +116,14 @@ main = do
             <> Opt.progDesc "feed-repeat repeats entries of given feeds into new feeds"
             <> Opt.header "feed-repeat"
         )
-  try (createDirectoryIfMissing True options.outputDir) >>= \case
-    Left (e :: IOException) -> do
-      logMsg ERR $ "Failed to create output directory: " <> displayException e
-      exitFailure
-    Right _ ->
-      try (createDirectoryIfMissing True options.cacheDir) >>= \case
-        Left (e :: IOException) -> do
-          logMsg ERR $ "Failed to create cache directory: " <> displayException e
-          exitFailure
-        Right _ -> run options
+  createDirs [options.outputDir, options.cacheDir]
+  run options
+  where
+    createDirs = traverse_ $ \dir ->
+      try (createDirectoryIfMissing True dir) >>= \case
+        Left (e :: IOException) ->
+          logMsg ERR ("Failed to create directory: " <> displayException e) >> exitFailure
+        Right _ -> return ()
 
 optionsParser :: Opt.Parser Options
 optionsParser =
@@ -143,49 +163,51 @@ run options =
       if not (null invalidTasks)
         then do
           logMsg ERR "Invalid source feed URLs in tasks:"
-          mapM_ (\c -> let URL url = c.sourceFeedUrl in logMsg ERR $ "  " <> url) invalidTasks
+          forM_ invalidTasks $ \task ->
+            let URL url = task.sourceFeedUrl in logMsg ERR $ "  " <> url
           exitFailure
-        else mapM_ (\c -> runTask c options.outputDir options.cacheDir) validTasks
+        else forM_ validTasks $ \task ->
+          runReaderT (runExceptT $ runTask task) options >>= \case
+            Left err -> logMsg ERR $ show err
+            Right _ -> return ()
 
-minRunGapSeconds :: NominalDiffTime
-minRunGapSeconds = 86400 -- one day
-
-runTask :: FeedTask -> FilePath -> FilePath -> IO ()
-runTask task outputDir cacheDir = do
+runTask :: FeedTask -> App ()
+runTask task = do
+  options <- ask
   let URL url = task.sourceFeedUrl
   logMsg DBG $ "Processing: " <> url
-  now <- getCurrentTime
-  let outputPath = outputDir </> task.outputFilename <> ".atom"
-  outputFeedResult <- parseAtomFile outputPath
-  let outputFeedUpdated = case outputFeedResult of
-        Left _ -> UTCTime (fromGregorian 2000 1 1) 0
-        Right outputFeed -> fromMaybe now $ parseDate $ Atom.feedUpdated outputFeed
-  if diffUTCTime now outputFeedUpdated < minRunGapSeconds
-    then logMsg INF $ "Skipping run for URL: " <> url
-    else
-      fetchCacheFeed task.cacheSourceFeed task.sourceFeedUrl cacheDir >>= \case
-        Left err -> logMsg ERR $ "Error fetching feed: " <> err
-        Right sourceFeed -> do
-          logMsg DBG $
-            "Fetched feed with " <> show (length $ Atom.feedEntries sourceFeed) <> " entries"
-          processSourceFeed task outputFeedResult sourceFeed outputDir
+  now <- liftIO getCurrentTime
+  let outputPath = options.outputDir </> task.outputFilename <> ".atom"
 
-processSourceFeed :: FeedTask -> Either String Atom.Feed -> Atom.Feed -> FilePath -> IO ()
-processSourceFeed task outputFeedResult sourceFeed outputDir = do
+  outputFeed <-
+    (Just <$> parseAtomFile outputPath) `catchError` \err -> do
+      logMsg WRN $ "Failed to read output feed: " <> show err
+      return Nothing
+  let outputFeedUpdated = case outputFeed of
+        Nothing -> UTCTime (fromGregorian 2000 1 1) 0
+        Just outputFeed -> fromMaybe now $ parseDate $ Atom.feedUpdated outputFeed
+  if diffUTCTime now outputFeedUpdated < fromIntegral minRunGapDays * 86400
+    then logMsg INF $ "Skipping run for URL: " <> url
+    else do
+      fetchCacheFeed task.cacheSourceFeed task.sourceFeedUrl
+        >>= processSourceFeed task outputFeed
+
+processSourceFeed :: FeedTask -> Maybe Atom.Feed -> Atom.Feed -> App ()
+processSourceFeed task mOutputFeed sourceFeed = do
   -- merge source and output feeds
-  mergedFeed <- case outputFeedResult of
-    Left err -> logMsg DBG ("Failed to read output feed: " <> err) >> return sourceFeed
-    Right outputFeed -> return $ mergeFeeds sourceFeed outputFeed
+  mergedFeed <- case mOutputFeed of
+    Nothing -> return sourceFeed
+    Just outputFeed -> return $ mergeFeeds sourceFeed outputFeed
 
   let allEntries = Atom.feedEntries mergedFeed
   logMsg DBG $ "Merged feed has " <> show (length allEntries) <> " entries"
 
   -- select entries
-  now <- getCurrentTime
+  now <- liftIO getCurrentTime
   let timestamp = T.pack $ iso8601Show now
       minAgeSeconds = fromIntegral task.minimumEntryAgeDays * 86400
   selectedEntries <-
-    selectEntries task.repeatedEntryCount minAgeSeconds allEntries
+    liftIO (selectEntries task.repeatedEntryCount minAgeSeconds allEntries)
       >>= traverse
         ( \e -> do
             entryId <- mkUuidUrn
@@ -194,9 +216,7 @@ processSourceFeed task outputFeedResult sourceFeed outputDir = do
   logMsg DBG $ "Selected " <> show (length selectedEntries) <> " entries for repetition"
 
   -- merge entries
-  let outputFeedEntries = case outputFeedResult of
-        Left _ -> []
-        Right outputFeed -> Atom.feedEntries outputFeed
+  let outputFeedEntries = maybe [] Atom.feedEntries mOutputFeed
   let combinedEntries = selectedEntries <> outputFeedEntries
   logMsg DBG $
     "Combined entries: "
@@ -205,87 +225,76 @@ processSourceFeed task outputFeedResult sourceFeed outputDir = do
       <> show (length combinedEntries)
 
   -- create new output feed
-  let resultFeed' = case outputFeedResult of
-        Left _ -> sourceFeed
-        Right outputFeed -> outputFeed
-      resultFeed =
-        resultFeed'
+  let resultFeed =
+        (fromMaybe sourceFeed mOutputFeed)
           { Atom.feedUpdated = T.pack $ iso8601Show now,
             Atom.feedEntries = combinedEntries
           }
 
   -- write new output feed
   let URL url = task.sourceFeedUrl
-  case Feed.textFeed (Feed.AtomFeed resultFeed) of
-    Nothing -> logMsg ERR $ "Failed to render feed for: " <> url
-    Just txt -> do
-      let outputPath = outputDir </> task.outputFilename <> ".atom"
-      try (writeFile outputPath txt) >>= \case
-        Left (e :: IOException) ->
-          logMsg ERR $ "Failed to write output file: " <> displayException e
-        Right _ -> logMsg INF $ "Processed " <> url <> " successfully"
+  content <-
+    fromMaybeOrThrow (FeedRenderError url) . Feed.textFeed $ Feed.AtomFeed resultFeed
+  options <- ask
+  let outputPath = options.outputDir </> task.outputFilename <> ".atom"
+  writeFile outputPath content
+  logMsg DBG $ "Wrote to: " <> outputPath
+  logMsg INF $ "Processed " <> url <> " successfully"
 
-mkUuidUrn :: IO T.Text
-mkUuidUrn = T.pack . ("urn:uuid:" <>) . show <$> UUID.nextRandom
+fetchCacheFeed :: Bool -> URL -> App Atom.Feed
+fetchCacheFeed cache (URL url) = do
+  options <- ask
+  let filePath = options.cacheDir </> show (hash url) <> ".atom"
+  freshOrCachedFeed <-
+    (Right <$> fetchFeed url) `catchError` \err ->
+      if cache
+        then do
+          logMsg WRN $
+            "Unable to fetch fresh feed for URL: " <> url <> ", using cached: " <> show err
+          Left <$> parseAtomFile filePath
+        else throwError err
+  mergedFeed <-
+    if cache
+      then case freshOrCachedFeed of
+        Right freshFeed ->
+          (mergeFeeds freshFeed <$> parseAtomFile filePath) `catchError` \_ -> return freshFeed
+        Left cachedFeed -> return cachedFeed
+      else return $ rightOrLeft freshOrCachedFeed
 
-fetchCacheFeed :: Bool -> URL -> FilePath -> IO (Either String Atom.Feed)
-fetchCacheFeed cache (URL url) cacheDir = do
-  let fileName = show (hash url) <> ".atom"
-      filePath = cacheDir </> fileName
-  fetchFeed url >>= \case
-    Left err | cache -> do
-      logMsg WRN $ "Unable to fetch fresh feed for URL: " <> url <> ", using cached: " <> err
-      parseAtomFile filePath
-    Left err -> return $ Left err
-    Right freshFeed -> do
-      mergedFeed <-
-        if cache
-          then
-            parseAtomFile filePath >>= \case
-              Left _ -> return freshFeed
-              Right savedFeed -> return $ mergeFeeds freshFeed savedFeed
-          else return freshFeed
+  when (cache && isRight freshOrCachedFeed) $
+    case Feed.textFeed (Feed.AtomFeed mergedFeed) of
+      Nothing -> logMsg WRN $ "Failed to export feed for URL: " <> url
+      Just txt ->
+        (writeFile filePath txt >> logMsg DBG ("Cached to: " <> filePath))
+          `catchError` (logMsg WRN . ("Failed to write cache file: " <>) . show)
 
-      when cache $
-        case Feed.textFeed (Feed.AtomFeed mergedFeed) of
-          Nothing -> logMsg WRN $ "Failed to export feed for URL: " <> url
-          Just txt -> do
-            try (writeFile filePath txt) >>= \case
-              Left (e :: IOException) ->
-                logMsg WRN $ "Failed to write cache file: " <> displayException e
-              Right _ -> logMsg INF $ "Cached " <> filePath <> " for URL: " <> url
-
-      return $ Right mergedFeed
-
-fetchFeed :: String -> IO (Either String Atom.Feed)
-fetchFeed url =
-  try (HTTP.parseRequest url) >>= \case
-    Left (e :: HTTP.HttpException) -> return $ Left $ "Invalid URL: " <> displayException e
-    Right request -> do
-      let request' =
-            request
-              { HTTP.responseTimeout = HTTP.responseTimeoutMicro requestTimeoutMicros,
-                HTTP.requestHeaders =
-                  HTTP.requestHeaders request <> [(HTTP.hUserAgent, "feed-repeat")]
-              }
-      try (HTTP.httpLBS request') >>= \case
-        Left (e :: HTTP.HttpException) -> return $ Left $ "HTTP error: " <> displayException e
-        Right response -> do
-          let body = TL.fromStrict $ TE.decodeUtf8Lenient $ LBS.toStrict $ HTTP.getResponseBody response
-          case Feed.parseFeedSource body of
-            Nothing -> return $ Left $ "Failed to parse feed: " <> url
-            Just feed ->
-              feedToAtom feed >>= \case
-                Nothing -> return $ Left $ "Failed to convert feed: " <> url
-                Just atomFeed -> return $ Right atomFeed
+  return mergedFeed
   where
-    requestTimeoutMicros = 30_000_000 -- 30 sec
+    rightOrLeft = \case Right a -> a; Left a -> a
 
-feedToAtom :: Feed.Feed -> IO (Maybe Atom.Feed)
-feedToAtom (Feed.AtomFeed af) = return $ Just af
+fetchFeed :: String -> App Atom.Feed
+fetchFeed url = do
+  atomFeed <-
+    tryOrThrow HTTPError (HTTP.parseRequest url)
+      >>= tryOrThrow HTTPError . HTTP.httpLBS . addHeaders
+      >>= fromMaybeOrThrow (FeedParseError url) . Feed.parseFeedSource . HTTP.getResponseBody
+      >>= feedToAtom
+  logMsg DBG $
+    "Fetched feed with " <> show (length $ Atom.feedEntries atomFeed) <> " entries"
+  return atomFeed
+  where
+    addHeaders request =
+      request
+        { HTTP.responseTimeout = HTTP.responseTimeoutMicro requestTimeoutMicros,
+          HTTP.requestHeaders =
+            HTTP.requestHeaders request <> [(HTTP.hUserAgent, "feed-repeat")]
+        }
+
+feedToAtom :: Feed.Feed -> App Atom.Feed
+feedToAtom (Feed.AtomFeed af) = return af
 feedToAtom feed = do
   feedUuid <- mkUuidUrn
-  now <- getCurrentTime
+  now <- liftIO getCurrentTime
   entries <-
     sortBy (comparing (Down . Atom.entryUpdated))
       <$> traverse (itemToAtomEntry now) (Feed.getFeedItems feed)
@@ -295,25 +304,24 @@ feedToAtom feed = do
       pubDate = Feed.getFeedPubDate feed
       feedId = fromMaybe feedUuid link
       mFeedUpdated = updateDate <|> pubDate <|> listToMaybe (map Atom.entryUpdated entries)
-  return $ case mFeedUpdated of
-    Nothing -> Nothing
-    Just feedUpdated ->
-      Just $
-        (Atom.nullFeed feedId (Atom.TextString title) feedUpdated)
-          { Atom.feedEntries = entries,
-            Atom.feedAuthors =
-              maybeToList . fmap (\name -> Atom.nullPerson {Atom.personName = name}) $
-                Feed.getFeedAuthor feed,
-            Atom.feedCategories =
-              map (\(term, scheme) -> (Atom.newCategory term) {Atom.catScheme = scheme}) $
-                Feed.getFeedCategories feed,
-            Atom.feedLogo = Feed.getFeedLogoLink feed,
-            Atom.feedGenerator = Atom.nullGenerator <$> Feed.getFeedGenerator feed,
-            Atom.feedLinks = mkLinks [("self", link), ("alternate", Feed.getFeedHTML feed)]
-          }
+
+  feedUpdated <- fromMaybeOrThrow InvalidFeedUpdatedError mFeedUpdated
+  return $
+    (Atom.nullFeed feedId (Atom.TextString title) feedUpdated)
+      { Atom.feedEntries = entries,
+        Atom.feedAuthors =
+          maybeToList . fmap (\name -> Atom.nullPerson {Atom.personName = name}) $
+            Feed.getFeedAuthor feed,
+        Atom.feedCategories =
+          map (\(term, scheme) -> (Atom.newCategory term) {Atom.catScheme = scheme}) $
+            Feed.getFeedCategories feed,
+        Atom.feedLogo = Feed.getFeedLogoLink feed,
+        Atom.feedGenerator = Atom.nullGenerator <$> Feed.getFeedGenerator feed,
+        Atom.feedLinks = mkLinks [("self", link), ("alternate", Feed.getFeedHTML feed)]
+      }
   where
     mkLink rel url = (Atom.nullLink url) {Atom.linkRel = Just $ Left rel}
-    mkLinks relsUrls = catMaybes $ map (\(rel, mUrl) -> mkLink rel <$> mUrl) relsUrls
+    mkLinks = mapMaybe (\(rel, mUrl) -> mkLink rel <$> mUrl)
 
     itemToAtomEntry now item = case item of
       Feed.AtomItem atomEntry -> return atomEntry
@@ -364,8 +372,6 @@ selectEntries n minAgeSeconds entries = do
   now <- getCurrentTime
   select now $ filter (isOldEnough now) entries
   where
-    halfLifeDays = 7
-
     isOldEnough currentTime entry =
       case parseDate $ Atom.entryUpdated entry of
         Nothing -> True
@@ -377,43 +383,43 @@ selectEntries n minAgeSeconds entries = do
       Just Nothing -> 1
       Just (Just updated) ->
         let age = diffUTCTime now updated
-         in if age > 0 then exp (realToFrac age / (86400 * halfLifeDays)) else 1
+         in if age > 0 then exp (realToFrac age / (86400 * selectWeightDoublingDays)) else 1
 
     select now es = do
       keys <- forM es $ \entry -> do
         r <- randomRIO (0, 1)
-        return $ r ** (1 / (computeWeight now entry))
+        return $ r ** (1 / computeWeight now entry)
       return $ take n $ map fst $ sortBy (comparing (Down . snd)) $ zip es keys
 
-parseAtomFile :: FilePath -> IO (Either String Atom.Feed)
+parseAtomFile :: FilePath -> App Atom.Feed
 parseAtomFile filePath = do
-  content <- try $ readFile filePath
-  case content of
-    Left (e :: IOException) ->
-      return . Left $ "Error reading " <> filePath <> ": " <> displayException e
-    Right body -> case Feed.parseFeedString body of
-      Nothing -> return . Left $ "Failed to parse Atom file " <> filePath
-      Just feed -> case feed of
-        Feed.AtomFeed af -> do
-          logMsg DBG $
-            ("Parsed Atom file " <> filePath <> " with ")
-              <> (show (length $ Feed.getFeedItems feed) <> " entries")
-          return $ Right af
-        _ -> return $ Left $ "File is not in Atom format: " <> filePath
+  feed <-
+    tryOrThrow IOError (readFile filePath)
+      >>= fromMaybeOrThrow (FeedParseError filePath) . Feed.parseFeedString
+  case feed of
+    Feed.AtomFeed af -> do
+      logMsg DBG $
+        ("Parsed Atom file " <> filePath <> " with ")
+          <> (show (length $ Feed.getFeedItems feed) <> " entries")
+      return af
+    _ -> throwError $ InvalidFormatError "Atom" filePath
 
-logMsg :: LogLevel -> String -> IO ()
+logMsg :: (MonadIO m) => LogLevel -> String -> m ()
 logMsg level msg = do
-  now <- getCurrentTime
-  tz <- getCurrentTimeZone
+  now <- liftIO getCurrentTime
+  tz <- liftIO getCurrentTimeZone
   let localTime = utcToLocalTime tz now
   let timestamp = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" localTime
-  putStrLn $ timestamp <> " [" <> show level <> "] " <> msg
+  liftIO $ putStrLn $ timestamp <> " [" <> show level <> "] " <> msg
 
-writeFile :: FilePath -> TL.Text -> IO ()
+writeFile :: FilePath -> TL.Text -> App ()
 writeFile fp content = do
   let tmpFP = fp <> ".tmp"
-  BS.writeFile tmpFP . TE.encodeUtf8 $ TL.toStrict content
-  renameFile tmpFP fp
+  tryOrThrow IOError $ BS.writeFile tmpFP . TE.encodeUtf8 $ TL.toStrict content
+  tryOrThrow IOError $ renameFile tmpFP fp
+
+mkUuidUrn :: (MonadIO m) => m T.Text
+mkUuidUrn = T.pack . ("urn:uuid:" <>) . show <$> liftIO UUID.nextRandom
 
 parseDate :: T.Text -> Maybe UTCTime
 parseDate ds = do
@@ -421,3 +427,9 @@ parseDate ds = do
       rfc3339DateFormat2 = "%Y-%m-%dT%H:%M:%S%Q%Z"
       formats = [rfc3339DateFormat1, rfc3339DateFormat2, rfc822DateFormat]
   foldl1 mplus (map (\fmt -> parseTimeM True defaultTimeLocale fmt $ T.unpack ds) formats)
+
+tryOrThrow :: (Exception e) => (e -> AppError) -> IO b -> App b
+tryOrThrow mkErr = liftIO . try >=> liftEither . mapLeft mkErr
+
+fromMaybeOrThrow :: AppError -> Maybe a -> App a
+fromMaybeOrThrow err = liftEither . maybeToRight err

@@ -25,7 +25,6 @@ common common-config
     OverloadedRecordDot
     OverloadedStrings
     RecordWildCards
-    StrictData
 
   ghc-options:
     -Weverything -Wno-all-missed-specialisations -Wno-deriving-typeable
@@ -49,6 +48,7 @@ executable feed-repeat
     , http-client
     , http-conduit
     , http-types
+    , mtl
     , optparse-applicative
     , random
     , time
