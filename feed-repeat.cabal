@@ -1,12 +1,26 @@
-cabal-version: 3.4
-name:          feed-repeat
-version:       0.1.0.0
-author:        Abhinav Sarkar
-maintainer:    Abhinav Sarkar
-license:       MIT
-license-file:  LICENSE
-build-type:    Simple
-category:      Web
+cabal-version:      3.4
+name:               feed-repeat
+version:            0.1.0.0
+synopsis:           Repeat entries from RSS/Atom feeds into new feeds
+description:
+  feed-repeat is a tool that processes RSS and Atom feeds, selecting older entries
+  and republishing them as fresh content. It supports intelligent entry selection
+  using weighted sampling where older entries have higher probability, optional
+  feed caching for resilience, and automatic format conversion.
+  .
+  The tool is configured via YAML and can be run standalone or integrated into
+  NixOS systems via the provided module.
+
+author:             Abhinav Sarkar
+maintainer:         Abhinav Sarkar
+license:            MIT
+license-file:       LICENSE
+build-type:         Simple
+category:           Web
+homepage:           https://code.abhinavsarkar.net/abhin4v/feed-repeat
+source-repository:  https://code.abhinavsarkar.net/abhin4v/feed-repeat.git
+bug-reports:        https://code.abhinavsarkar.net/abhin4v/feed-repeat/issues
+extra-source-files: README.md
 
 common common-config
   build-depends:
