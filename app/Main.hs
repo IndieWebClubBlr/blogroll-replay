@@ -32,7 +32,9 @@ import Network.HTTP.Types qualified as HTTP
 import Options.Applicative qualified as Opt
 import System.Directory (createDirectoryIfMissing, renameFile)
 import System.Exit (exitFailure)
-import System.FilePath ((</>))
+import System.FilePath (takeDirectory, (</>))
+import System.IO (hClose)
+import System.IO.Temp (withTempFile)
 import Text.Atom.Feed qualified as Atom
 import Text.Feed.Export qualified as Feed
 import Text.Feed.Import qualified as Feed
@@ -160,7 +162,7 @@ runTask task = do
   let outputFeedUpdated = case outputFeed of
         Nothing -> UTCTime (fromGregorian 2000 1 1) 0
         Just outputFeed -> fromMaybe now $ parseDate $ Atom.feedUpdated outputFeed
-  if diffUTCTime now outputFeedUpdated < fromIntegral minRunGapDays * 86400
+  if diffUTCTime now outputFeedUpdated < fromIntegral minRunGapDays * fromIntegral secondsPerDay
     then logMsg INF $ "Skipping run for URL: " <> url
     else do
       fetchCacheFeed task.cacheSourceFeed task.sourceFeedUrl
@@ -179,7 +181,7 @@ processSourceFeed task mOutputFeed sourceFeed = do
   -- select entries
   now <- liftIO getCurrentTime
   let timestamp = T.pack $ iso8601Show now
-      minAgeSeconds = fromIntegral task.minimumEntryAgeDays * 86400
+      minAgeSeconds = fromIntegral (task.minimumEntryAgeDays * fromIntegral secondsPerDay)
   selectedEntries <-
     liftIO (selectEntries task.repeatedEntryCount minAgeSeconds allEntries)
       >>= traverse
@@ -287,6 +289,8 @@ logMsg level msg = do
 
 writeFile :: FilePath -> TL.Text -> App ()
 writeFile fp content = do
-  let tmpFP = fp <> ".tmp"
-  tryOrThrow IOError $ BS.writeFile tmpFP . TE.encodeUtf8 $ TL.toStrict content
-  tryOrThrow IOError $ renameFile tmpFP fp
+  let dir = takeDirectory fp
+  tryOrThrow IOError $ withTempFile dir "feed-repeat-" $ \tmpFP tmpH -> do
+    BS.hPutStr tmpH . TE.encodeUtf8 $ TL.toStrict content
+    hClose tmpH
+    renameFile tmpFP fp

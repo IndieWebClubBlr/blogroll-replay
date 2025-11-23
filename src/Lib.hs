@@ -6,7 +6,8 @@ import Control.Monad (forM, join, mplus, (>=>))
 import Control.Monad.Except (MonadError, liftEither)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Either.Combinators (mapLeft, maybeToRight)
-import Data.List (nubBy, sortBy)
+import Data.List (sortBy)
+import Data.List.Extra (nubOrdOn)
 import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, maybeToList)
 import Data.Ord (Down (..), comparing)
 import Data.Text qualified as T
@@ -20,6 +21,9 @@ import Text.Atom.Feed qualified as Atom
 import Text.Feed.Query qualified as Feed
 import Text.Feed.Types qualified as Feed
 import Prelude hiding (writeFile)
+
+secondsPerDay :: Integer
+secondsPerDay = 86400
 
 data AppError
   = IOError IOException
@@ -111,10 +115,7 @@ mergeFeeds :: Atom.Feed -> Atom.Feed -> Atom.Feed
 mergeFeeds feed1 feed2 =
   let allEntries = Atom.feedEntries feed1 <> Atom.feedEntries feed2
       sortedEntries = sortBy (comparing (Down . Atom.entryUpdated)) allEntries
-      uniqueEntries =
-        nubBy
-          (\a b -> Feed.getItemLink (Feed.AtomItem a) == Feed.getItemLink (Feed.AtomItem b))
-          sortedEntries
+      uniqueEntries = nubOrdOn (Feed.getItemLink . Feed.AtomItem) sortedEntries
    in feed1 {Atom.feedEntries = uniqueEntries}
 
 selectEntries :: Int -> Integer -> [Atom.Entry] -> IO [Atom.Entry]
@@ -133,7 +134,7 @@ selectEntries n minAgeSeconds entries = do
       Nothing -> 1
       Just updated ->
         let age = diffUTCTime now updated
-         in if age > 0 then exp (realToFrac age / (86400 * 365)) else 1
+         in if age > 0 then exp (realToFrac age / (realToFrac secondsPerDay * 365)) else 1
 
     -- A-Res algorithm
     select now es = do
@@ -150,7 +151,7 @@ parseDate ds = do
   let rfc3339DateFormat1 = "%Y-%m-%dT%H:%M:%S%Z"
       rfc3339DateFormat2 = "%Y-%m-%dT%H:%M:%S%Q%Z"
       formats = [rfc3339DateFormat1, rfc3339DateFormat2, rfc822DateFormat]
-  foldl1 mplus (map (\fmt -> parseTimeM True defaultTimeLocale fmt $ T.unpack ds) formats)
+  foldr1 mplus (map (\fmt -> parseTimeM True defaultTimeLocale fmt $ T.unpack ds) formats)
 
 tryOrThrow :: (MonadIO m, Exception e1, MonadError e2 m) => (e1 -> e2) -> IO c -> m c
 tryOrThrow mkErr = liftIO . try >=> liftEither . mapLeft mkErr

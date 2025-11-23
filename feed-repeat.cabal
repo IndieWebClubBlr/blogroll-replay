@@ -57,6 +57,7 @@ library
   exposed-modules: Lib
   build-depends:
     , feed
+    , extra
     , http-client
     , mtl
     , random
@@ -76,6 +77,7 @@ executable feed-repeat
     , http-types
     , mtl
     , optparse-applicative
+    , temporary
     , time
     , yaml
 
