@@ -35,6 +35,7 @@ import System.Exit (exitFailure)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose)
 import System.IO.Temp (withTempFile)
+import System.Posix.Files (groupReadMode, ownerReadMode, ownerWriteMode, setFileMode, unionFileModes)
 import Text.Atom.Feed qualified as Atom
 import Text.Feed.Export qualified as Feed
 import Text.Feed.Import qualified as Feed
@@ -214,6 +215,8 @@ processSourceFeed task mOutputFeed sourceFeed = do
   options <- ask
   let outputPath = options.outputDir </> task.outputFilename <> ".atom"
   writeFile outputPath content
+  tryOrThrow IOError $
+    setFileMode outputPath $ foldr1 unionFileModes [ownerReadMode, ownerWriteMode, groupReadMode]
   logMsg DBG $ "Wrote to: " <> outputPath
   logMsg INF $ "Processed " <> url <> " successfully"
 
