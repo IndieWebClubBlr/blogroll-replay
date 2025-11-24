@@ -32,6 +32,7 @@ import Network.HTTP.Simple qualified as HTTP
 import Network.HTTP.Types qualified as HTTP
 import Options.Applicative qualified as Opt
 import System.Directory (createDirectoryIfMissing, renameFile)
+import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose)
@@ -298,11 +299,16 @@ parseAtomFile filePath = do
 
 logMsg :: (MonadIO m) => LogLevel -> String -> m ()
 logMsg level msg = do
-  now <- liftIO getCurrentTime
-  tz <- liftIO getCurrentTimeZone
-  let localTime = utcToLocalTime tz now
-  let timestamp = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" localTime
-  liftIO $ putStrLn $ timestamp <> " [" <> show level <> "] " <> msg
+  runningUnderSystemd <- liftIO $ fmap (== Just "1") $ lookupEnv "RUNNING_UNDER_SYSTEMD"
+  logLine <- if runningUnderSystemd
+    then return $ "[" <> show level <> "] " <> msg
+    else do
+      now <- liftIO getCurrentTime
+      tz <- liftIO getCurrentTimeZone
+      let localTime = utcToLocalTime tz now
+      let timestamp = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" localTime
+      return $ timestamp <> " [" <> show level <> "] " <> msg
+  liftIO $ putStrLn logLine
 
 writeFile :: FilePath -> TL.Text -> App ()
 writeFile fp content = do

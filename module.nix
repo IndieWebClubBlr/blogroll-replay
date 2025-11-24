@@ -134,6 +134,9 @@ in
         feedRepeatPkg
         configFile
       ];
+      environment = {
+        RUNNING_UNDER_SYSTEMD = "1";
+      };
       serviceConfig = {
         ExecStart = "${feedRepeatPkg}/bin/feed-repeat --config ${configFile} --output-dir ${cfg.outputDir} --cache-dir ${cfg.cacheDir}";
         User = serviceName;
