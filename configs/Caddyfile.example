@@ -1,0 +1,16 @@
+# Caddy configuration for serving feed-repeat output files
+
+feeds.example.com {
+    root * /var/lib/feed-repeat
+    file_server
+    encode gzip
+
+    @atom {
+        path *.atom
+    }
+    header @atom Content-Type "application/atom+xml"
+    header @atom Cache-Control "public, max-age=21600"
+
+    header Strict-Transport-Security "max-age=31536000"
+    header X-Content-Type-Options "nosniff"
+}

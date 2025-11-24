@@ -1,0 +1,27 @@
+# Apache configuration for serving feed-repeat output files
+# Place this in /etc/apache2/sites-available/ and enable with: a2ensite feed-repeat
+
+<VirtualHost *:80>
+    ServerName feeds.example.com
+    RewriteEngine On
+    RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+</VirtualHost>
+
+<VirtualHost *:443>
+    ServerName feeds.example.com
+    DocumentRoot /var/lib/feed-repeat
+
+    SSLEngine on
+    SSLCertificateFile /etc/letsencrypt/live/feeds.example.com/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/feeds.example.com/privkey.pem
+
+    <Directory /var/lib/feed-repeat>
+        Require all granted
+        AddType application/atom+xml .atom
+        ExpiresActive On
+        ExpiresDefault "access plus 6 hours"
+    </Directory>
+
+    Header always set Strict-Transport-Security "max-age=31536000"
+    Header always set X-Content-Type-Options "nosniff"
+</VirtualHost>

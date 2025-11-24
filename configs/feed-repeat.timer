@@ -1,0 +1,10 @@
+[Unit]
+Description=Feed Repeat Timer
+Requires=feed-repeat.service
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

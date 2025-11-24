@@ -39,7 +39,7 @@ build-static
 run
 ```
 
-### Using as a NixOS Module
+## Using as a NixOS Module
 
 The project includes a NixOS module (`module.nix`) for easy integration into NixOS systems. Import it in your configuration:
 
@@ -83,6 +83,69 @@ The module automatically:
 - Generates the configuration file from your NixOS settings.
 - Optionally configures Nginx to serve the output feeds.
 - Applies strict security hardening to the service.
+
+## Using as a systemd Service
+
+For non-NixOS systems, a systemd service file (`configs/feed-repeat.service`) is provided. To set it up:
+
+1. **Create user and group**:
+   ```bash
+   sudo useradd -r -s /bin/false feed-repeat
+   ```
+
+2. **Create required directories**:
+   ```bash
+   sudo mkdir -p /var/lib/feed-repeat /var/cache/feed-repeat /etc/feed-repeat
+   sudo chown feed-repeat:feed-repeat /var/lib/feed-repeat /var/cache/feed-repeat
+   sudo chmod 750 /var/lib/feed-repeat /var/cache/feed-repeat
+   ```
+
+3. **Install the service file**:
+   ```bash
+   sudo cp configs/feed-repeat.service /etc/systemd/system/
+   ```
+
+4. **Place your configuration**:
+   ```bash
+   sudo cp config.yaml /etc/feed-repeat/config.yaml
+   sudo chown feed-repeat:feed-repeat /etc/feed-repeat/config.yaml
+   sudo chmod 640 /etc/feed-repeat/config.yaml
+   ```
+
+5. **Build and install the binary**:
+   ```bash
+   cabal build
+   sudo install -D -m 0755 \
+    dist-newstyle/build/*/ghc-*/feed-repeat-*/x/feed-repeat/build/feed-repeat/feed-repeat \
+    /usr/local/bin/feed-repeat
+   ```
+
+6. **Install the timer unit**:
+   ```bash
+   sudo cp configs/feed-repeat.timer /etc/systemd/system/
+   ```
+
+7. **Enable and start the service**:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now feed-repeat.timer
+   ```
+
+## Serving Feeds with a Web Server
+
+To serve the output feeds publicly, you can use any web server. Example configurations are provided for:
+
+- **Nginx**: `configs/nginx.conf.example`
+- **Apache**: `configs/apache.conf.example`
+- **Caddy**: `configs/Caddyfile.example`
+
+All examples include:
+- Automatic HTTPS with Let's Encrypt
+- Security headers (HSTS, X-Content-Type-Options, etc.)
+- Proper Atom feed content-type handling
+- 6-hour caching for feed files
+
+Choose the configuration that matches your web server and customize the domain name and paths as needed.
 
 ## Usage
 
