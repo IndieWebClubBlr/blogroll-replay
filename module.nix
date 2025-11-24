@@ -128,6 +128,8 @@ in
     systemd.services.${serviceName} = {
       enable = true;
       description = "${serviceName} service";
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
       startAt = cfg.timerOnCalendar;
       restartIfChanged = true;
       restartTriggers = [
@@ -221,6 +223,16 @@ in
         locations = {
           "${cfg.virtualHostPath}" = {
             alias = "${cfg.outputDir}/";
+            extraConfig = ''
+              types {
+                application/atom+xml atom;
+              }
+              default_type application/octet-stream;
+              expires 6h;
+              add_header Cache-Control "public, max-age=21600";
+              add_header Strict-Transport-Security "max-age=31536000" always;
+              add_header X-Content-Type-Options "nosniff" always;
+            '';
           };
         };
       };
