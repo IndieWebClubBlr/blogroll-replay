@@ -41,11 +41,11 @@ run
 
 ## Using as a NixOS Module
 
-The project includes a NixOS module (`module.nix`) for easy integration into NixOS systems. Import it in your configuration:
+The project includes a NixOS module (`nix/module.nix`) for easy integration into NixOS systems. Import it in your configuration:
 
 ```nix
 {
-  imports = [ ./feed-repeat/module.nix ];
+  imports = [ ./feed-repeat/nix/module.nix ];
 
   services.feed-repeat = {
     enable = true;
@@ -244,7 +244,7 @@ Run frequency is limited to once per day per feed to avoid thrashing output feed
 - `feed-repeat.cabal`: Build configuration
 - `config.yaml`: Example configuration file
 - `nix/`: Nix build files
-- `module.nix`: NixOS module
+- `nix/module.nix`: NixOS module
 
 ## Dependencies
 
