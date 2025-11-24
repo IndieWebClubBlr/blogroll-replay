@@ -20,7 +20,14 @@ import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Text.Lazy qualified as TL
-import Data.Time (UTCTime (..), diffUTCTime, getCurrentTime, getCurrentTimeZone, utcToLocalTime)
+import Data.Time
+  ( TimeZone,
+    UTCTime (..),
+    diffUTCTime,
+    getCurrentTime,
+    getCurrentTimeZone,
+    utcToLocalTime,
+  )
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Time.Format.ISO8601 (iso8601Show)
@@ -37,7 +44,13 @@ import System.Exit (exitFailure)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose)
 import System.IO.Temp (withTempFile)
-import System.Posix.Files (groupReadMode, ownerReadMode, ownerWriteMode, setFileMode, unionFileModes)
+import System.Posix.Files
+  ( groupReadMode,
+    ownerReadMode,
+    ownerWriteMode,
+    setFileMode,
+    unionFileModes,
+  )
 import Text.Atom.Feed qualified as Atom
 import Text.Feed.Export qualified as Feed
 import Text.Feed.Import qualified as Feed
@@ -81,13 +94,23 @@ instance Aeson.FromJSON FeedTask where
       <*> v .: "minimumEntryAgeDays"
       <*> v .:? "minRunGapDays" .!= 1
 
+data LogConfig = LogConfig
+  { omitTimestamp :: Bool,
+    timeZone :: TimeZone
+  }
+
 data Options = Options
   { configPath :: FilePath,
     outputDir :: FilePath,
     cacheDir :: FilePath
   }
 
-type App a = ExceptT AppError (ReaderT Options IO) a
+data Env = Env
+  { options :: Options,
+    logConfig :: LogConfig
+  }
+
+type App a = ExceptT AppError (ReaderT Env IO) a
 
 requestTimeoutMicros :: Int
 requestTimeoutMicros = 30_000_000 -- 30 sec
@@ -102,13 +125,17 @@ main = do
             <> Opt.progDesc "feed-repeat repeats entries of given feeds into new feeds"
             <> Opt.header "feed-repeat"
         )
-  createDirs [options.outputDir, options.cacheDir]
-  run options
+  runningUnderSystemd <- fmap (== Just "1") $ lookupEnv "RUNNING_UNDER_SYSTEMD"
+  tz <- getCurrentTimeZone
+  let env = Env options $ LogConfig runningUnderSystemd tz
+  createDirs env [options.outputDir, options.cacheDir]
+  run env
   where
-    createDirs = traverse_ $ \dir ->
+    createDirs env = traverse_ $ \dir ->
       try (createDirectoryIfMissing True dir) >>= \case
-        Left (e :: IOException) ->
-          logMsg ERR ("Failed to create directory: " <> displayException e) >> exitFailure
+        Left (e :: IOException) -> do
+          logIO env ERR $ "Failed to create directory: " <> displayException e
+          exitFailure
         Right _ -> return ()
 
 optionsParser :: Opt.Parser Options
@@ -132,13 +159,11 @@ optionsParser =
       )
       Opt.<**> Opt.helper
 
-run :: Options -> IO ()
-run options =
-  Yaml.decodeFileEither options.configPath >>= \case
-    Left err -> do
-      logMsg ERR $ "Error reading config: " <> show err
-      exitFailure
-    Right tasks | null tasks -> logMsg ERR "No tasks found in file" >> exitFailure
+run :: Env -> IO ()
+run env =
+  Yaml.decodeFileEither env.options.configPath >>= \case
+    Left err -> logIO env ERR ("Error reading config: " <> show err) >> exitFailure
+    Right tasks | null tasks -> logIO env ERR "No tasks found in file" >> exitFailure
     Right tasks -> do
       validationResults <- forM tasks $ \task -> do
         let URL url = task.sourceFeedUrl
@@ -148,18 +173,18 @@ run options =
       let invalidTasks = map fst $ filter (not . snd) validationResults
       if not (null invalidTasks)
         then do
-          logMsg ERR "Invalid source feed URLs in tasks:"
+          logIO env ERR "Invalid source feed URLs in tasks:"
           forM_ invalidTasks $ \task ->
-            let URL url = task.sourceFeedUrl in logMsg ERR $ "  " <> url
+            let URL url = task.sourceFeedUrl in logIO env ERR $ "  " <> url
           exitFailure
         else forM_ validTasks $ \task ->
-          runReaderT (runExceptT $ runTask task) options >>= \case
-            Left err -> logMsg ERR $ show err
+          runReaderT (runExceptT $ runTask task) env >>= \case
+            Left err -> logIO env ERR $ show err
             Right _ -> return ()
 
 runTask :: FeedTask -> App ()
 runTask task = do
-  options <- ask
+  env <- ask
   let URL url = task.sourceFeedUrl
   logMsg DBG $ "Processing: " <> url
   logMsg DBG $
@@ -168,7 +193,7 @@ runTask task = do
       <> (", minimumEntryAgeDays=" <> show task.minimumEntryAgeDays)
       <> (", minRunGapDays=" <> show task.minRunGapDays)
   now <- liftIO getCurrentTime
-  let outputPath = options.outputDir </> task.outputFilename <> ".atom"
+  let outputPath = env.options.outputDir </> task.outputFilename <> ".atom"
 
   outputFeed <-
     (Just <$> parseAtomFile outputPath) `catchError` \err -> do
@@ -226,8 +251,8 @@ processSourceFeed task mOutputFeed sourceFeed = do
   let URL url = task.sourceFeedUrl
   content <-
     fromMaybeOrThrow (FeedRenderError url) . Feed.textFeed $ Feed.AtomFeed resultFeed
-  options <- ask
-  let outputPath = options.outputDir </> task.outputFilename <> ".atom"
+  env <- ask
+  let outputPath = env.options.outputDir </> task.outputFilename <> ".atom"
   writeFile outputPath content
   tryOrThrow IOError $
     setFileMode outputPath $
@@ -237,8 +262,8 @@ processSourceFeed task mOutputFeed sourceFeed = do
 
 fetchCacheFeed :: Bool -> URL -> App Atom.Feed
 fetchCacheFeed cache (URL url) = do
-  options <- ask
-  let filePath = options.cacheDir </> show (hash url) <> ".atom"
+  env <- ask
+  let filePath = env.options.cacheDir </> show (hash url) <> ".atom"
   freshOrCachedFeed <-
     (Right <$> fetchFeed url) `catchError` \err ->
       if cache
@@ -297,17 +322,25 @@ parseAtomFile filePath = do
       return af
     _ -> throwError $ InvalidFormatError "Atom" filePath
 
-logMsg :: (MonadIO m) => LogLevel -> String -> m ()
+logMsg :: LogLevel -> String -> App ()
 logMsg level msg = do
-  runningUnderSystemd <- liftIO $ fmap (== Just "1") $ lookupEnv "RUNNING_UNDER_SYSTEMD"
-  logLine <- if runningUnderSystemd
-    then return $ "[" <> show level <> "] " <> msg
-    else do
-      now <- liftIO getCurrentTime
-      tz <- liftIO getCurrentTimeZone
-      let localTime = utcToLocalTime tz now
-      let timestamp = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" localTime
-      return $ timestamp <> " [" <> show level <> "] " <> msg
+  env <- ask
+  logMsg' env.logConfig level msg
+
+logIO :: Env -> LogLevel -> String -> IO ()
+logIO env = logMsg' env.logConfig
+
+logMsg' :: (MonadIO m) => LogConfig -> LogLevel -> String -> m ()
+logMsg' logConfig level msg = do
+  logLine <-
+    (<> "[" <> show level <> "] " <> msg)
+      <$> if logConfig.omitTimestamp
+        then return ""
+        else do
+          now <- liftIO getCurrentTime
+          let localTime = utcToLocalTime logConfig.timeZone now
+          let timestamp = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" localTime
+          return $ timestamp <> " "
   liftIO $ putStrLn logLine
 
 writeFile :: FilePath -> TL.Text -> App ()
