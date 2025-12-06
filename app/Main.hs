@@ -118,6 +118,9 @@ type App a = ExceptT AppError (ReaderT Env IO) a
 requestTimeoutMicros :: Int
 requestTimeoutMicros = 30_000_000 -- 30 sec
 
+timerToleranceSeconds :: Int
+timerToleranceSeconds = 5 * 60 -- 5 minutes tolerance for systemd timer imprecision
+
 main :: IO ()
 main = do
   options <-
@@ -220,7 +223,8 @@ runTask task = do
   let outputFeedUpdated = case outputFeed of
         Nothing -> UTCTime (fromGregorian 2000 1 1) 0
         Just outputFeed -> fromMaybe now $ parseDate $ Atom.feedUpdated outputFeed
-  if diffUTCTime now outputFeedUpdated < fromIntegral task.minRunGapDays * fromIntegral secondsPerDay
+  let minRunGapSeconds = fromIntegral $ task.minRunGapDays * secondsPerDay - timerToleranceSeconds
+  if diffUTCTime now outputFeedUpdated < minRunGapSeconds
     then logMsg INF $ "Skipping run for URL: " <> url
     else do
       fetchCacheFeed task.cacheSourceFeed task.sourceFeedUrl
@@ -239,7 +243,7 @@ processSourceFeed task mOutputFeed sourceFeed = do
   -- select entries
   now <- liftIO getCurrentTime
   let timestamp = T.pack $ iso8601Show now
-      minAgeSeconds = fromIntegral (task.minimumEntryAgeDays * fromIntegral secondsPerDay)
+      minAgeSeconds = fromIntegral $ task.minimumEntryAgeDays * secondsPerDay
   selectedEntries <-
     liftIO (selectEntries task.repeatedEntryCount minAgeSeconds task.maxEntryCountPerDomain allEntries)
       >>= traverse

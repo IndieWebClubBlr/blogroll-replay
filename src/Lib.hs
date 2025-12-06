@@ -24,7 +24,7 @@ import Text.Feed.Query qualified as Feed
 import Text.Feed.Types qualified as Feed
 import Prelude hiding (writeFile)
 
-secondsPerDay :: Integer
+secondsPerDay :: Int
 secondsPerDay = 86400
 
 data AppError
