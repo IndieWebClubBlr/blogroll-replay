@@ -15,33 +15,135 @@ import Text.RSS.Syntax qualified as RSS
 main :: IO ()
 main = hspec $ do
   describe "parseDate" $ do
-    it "parses valid RFC3339 format with timezone" $ do
-      let result = parseDate "2025-11-22T10:30:45UTC"
-      result `shouldNotBe` Nothing
+    describe "RFC3339 formats" $ do
+      it "parses RFC3339 with UTC timezone" $ do
+        let result = parseDate "2025-11-22T10:30:45UTC"
+        result `shouldNotBe` Nothing
 
-    it "parses valid RFC822 format" $ do
-      let result = parseDate "Sat, 22 Nov 2025 10:30:45 GMT"
-      result `shouldNotBe` Nothing
+      it "parses RFC3339 with Z timezone indicator" $ do
+        let result = parseDate "2025-11-22T10:30:45Z"
+        result `shouldNotBe` Nothing
 
-    it "parses RFC3339 with microseconds" $ do
-      let result = parseDate "2025-11-22T10:30:45.123456UTC"
-      result `shouldNotBe` Nothing
+      it "parses RFC3339 with +00:00 timezone offset" $ do
+        let result = parseDate "2025-11-22T10:30:45+00:00"
+        result `shouldNotBe` Nothing
 
-    it "parses dates with Z timezone indicator" $ do
-      let result = parseDate "2025-11-22T10:30:45Z"
-      result `shouldNotBe` Nothing
+      it "parses RFC3339 with -05:00 timezone offset" $ do
+        let result = parseDate "2025-11-22T10:30:45-05:00"
+        result `shouldNotBe` Nothing
 
-    it "parses uppercase and lowercase month names" $ do
-      let result = parseDate "Sat, 22 nov 2025 10:30:45 GMT"
-      result `shouldNotBe` Nothing
+      it "parses RFC3339 with microseconds and UTC" $ do
+        let result = parseDate "2025-11-22T10:30:45.123456UTC"
+        result `shouldNotBe` Nothing
 
-    it "returns Nothing for malformed dates" $ do
-      let result = parseDate "invalid-date"
-      result `shouldBe` Nothing
+      it "parses RFC3339 with microseconds and Z" $ do
+        let result = parseDate "2025-11-22T10:30:45.999999Z"
+        result `shouldNotBe` Nothing
 
-    it "returns Nothing for empty string" $ do
-      let result = parseDate ""
-      result `shouldBe` Nothing
+      it "parses RFC3339 with milliseconds" $ do
+        let result = parseDate "2025-11-22T10:30:45.123UTC"
+        result `shouldNotBe` Nothing
+
+    describe "RFC822 formats" $ do
+      it "parses RFC822 with GMT timezone" $ do
+        let result = parseDate "Sat, 22 Nov 2025 10:30:45 GMT"
+        result `shouldNotBe` Nothing
+
+      it "parses RFC822 with numeric timezone offset" $ do
+        let result = parseDate "Sat, 22 Nov 2025 10:30:45 +0000"
+        result `shouldNotBe` Nothing
+
+      it "parses RFC822 with negative timezone offset" $ do
+        let result = parseDate "Sat, 22 Nov 2025 10:30:45 -0500"
+        result `shouldNotBe` Nothing
+
+      it "parses RFC822 with PST timezone" $ do
+        let result = parseDate "Sat, 22 Nov 2025 10:30:45 PST"
+        result `shouldNotBe` Nothing
+
+      it "parses RFC822 with different day abbreviations" $ do
+        let days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        mapM_ (\day -> parseDate (T.pack $ day <> ", 22 Nov 2025 10:30:45 GMT") `shouldNotBe` Nothing) days
+
+    describe "Simple date formats (no time)" $ do
+      it "parses simple ISO8601 date" $ do
+        let result = parseDate "2025-11-22"
+        result `shouldNotBe` Nothing
+
+      it "parses date with single-digit month and day" $ do
+        let result = parseDate "2025-1-5"
+        result `shouldNotBe` Nothing
+
+      it "parses date with double-digit month and day" $ do
+        let result = parseDate "2025-01-05"
+        result `shouldNotBe` Nothing
+
+    describe "Date formats with month names" $ do
+      it "parses date with full month name" $ do
+        let result = parseDate "17 Jul 2022 00:00:00 GMT"
+        result `shouldNotBe` Nothing
+
+      it "parses date with full month name and day abbreviation" $ do
+        let result = parseDate "Mon, 08 December 2025 11:07:49 +0000"
+        result `shouldNotBe` Nothing
+
+      it "parses date with lowercase month names" $ do
+        let result = parseDate "Sat, 22 nov 2025 10:30:45 GMT"
+        result `shouldNotBe` Nothing
+
+      it "parses date with different month abbreviations" $ do
+        let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        mapM_ (\month -> parseDate (T.pack $ "22 " <> month <> " 2025 10:30:45 GMT") `shouldNotBe` Nothing) months
+
+    describe "Edge cases and boundary dates" $ do
+      it "parses leap year date (Feb 29)" $ do
+        let result = parseDate "2024-02-29T10:30:45Z"
+        result `shouldNotBe` Nothing
+
+      it "parses year 2000" $ do
+        let result = parseDate "2000-01-01T00:00:00Z"
+        result `shouldNotBe` Nothing
+
+      it "parses recent dates" $ do
+        let result = parseDate "2025-12-30T23:59:59Z"
+        result `shouldNotBe` Nothing
+
+      it "parses dates at midnight" $ do
+        let result = parseDate "2025-11-22T00:00:00Z"
+        result `shouldNotBe` Nothing
+
+      it "parses dates at end of day" $ do
+        let result = parseDate "2025-11-22T23:59:59Z"
+        result `shouldNotBe` Nothing
+
+    describe "Invalid date formats" $ do
+      it "returns Nothing for malformed dates" $ do
+        let result = parseDate "invalid-date"
+        result `shouldBe` Nothing
+
+      it "returns Nothing for empty string" $ do
+        let result = parseDate ""
+        result `shouldBe` Nothing
+
+      it "returns Nothing for random text" $ do
+        let result = parseDate "not a date"
+        result `shouldBe` Nothing
+
+      it "returns Nothing for invalid month" $ do
+        let result = parseDate "2025-13-01T10:30:45Z"
+        result `shouldBe` Nothing
+
+      it "returns Nothing for invalid day" $ do
+        let result = parseDate "2025-11-31T10:30:45Z"
+        result `shouldBe` Nothing
+
+      it "returns Nothing for malformed timestamp" $ do
+        let result = parseDate "2025-11-22T25:70:99Z"
+        result `shouldBe` Nothing
+
+      it "returns Nothing for only date part without time" $ do
+        let result = parseDate "2025-11-22 not valid"
+        result `shouldBe` Nothing
 
   describe "mergeFeeds" $ do
     it "deduplicates entries by link" $ do
@@ -468,7 +570,7 @@ main = hspec $ do
         if null entries
           then discard
           else do
-            selections <- replicateM 10 (selectEntries 100 0 Nothing entries)
+            selections <- replicateM 10 $ selectEntries 100 0 Nothing entries
             let selectedIds = [Atom.entryId e | sel <- selections, e <- sel]
                 selectedYears = map (read . T.unpack . T.takeWhile (/= '_')) selectedIds
 
@@ -480,4 +582,4 @@ main = hspec $ do
                     pct1980s = (decadeCounts1980s * 100) `div` yearCount
                 return
                   . cover 95 (pct1980s >= 95) "from 1980s"
-                  $ pct1980s >= 95
+                  $ pct1980s >= 95 -- number of items from 1980s is over 95%

@@ -252,7 +252,7 @@ processSourceFeed task mOutputFeed sourceFeed = do
             return e {Atom.entryId = entryId, Atom.entryUpdated = timestamp}
         )
   if null selectedEntries
-    then logMsg WRN $ "Selected no entries for repetition"
+    then logMsg WRN "Selected no entries for repetition"
     else do
       logMsg DBG $ "Selected " <> show (length selectedEntries) <> " entries for repetition"
 

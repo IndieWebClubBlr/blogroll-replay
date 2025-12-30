@@ -1,8 +1,8 @@
 module Lib where
 
-import Control.Applicative ((<|>))
+import Control.Applicative (asum, (<|>))
 import Control.Exception (Exception, IOException, displayException, try)
-import Control.Monad (forM, join, mplus, (>=>))
+import Control.Monad (forM, (>=>))
 import Control.Monad.Except (MonadError, liftEither)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Either.Combinators (mapLeft, maybeToRight)
@@ -86,7 +86,7 @@ feedToAtom feed = do
         let title = Feed.getItemTitle item
             itemId = snd <$> Feed.getItemId item
             link = Feed.getItemLink item
-            pubDate = join (Feed.getItemPublishDate @UTCTime item)
+            pubDate = Feed.getItemPublishDateString item >>= parseDate
             entryId = fromMaybe entryUuid (itemId <|> link)
             entryTitle = Atom.TextString $ fromMaybe "" title
             entryUpdated = T.pack $ iso8601Show $ fromMaybe now pubDate
@@ -166,11 +166,18 @@ mkUuidUrn :: (MonadIO m) => m T.Text
 mkUuidUrn = T.pack . ("urn:uuid:" <>) . show <$> liftIO UUID.nextRandom
 
 parseDate :: T.Text -> Maybe UTCTime
-parseDate ds = do
-  let rfc3339DateFormat1 = "%Y-%m-%dT%H:%M:%S%Z"
-      rfc3339DateFormat2 = "%Y-%m-%dT%H:%M:%S%Q%Z"
-      formats = [rfc3339DateFormat1, rfc3339DateFormat2, rfc822DateFormat]
-  foldr1 mplus (map (\fmt -> parseTimeM True defaultTimeLocale fmt $ T.unpack ds) formats)
+parseDate ds =
+  let formats =
+        [ "%Y-%m-%dT%H:%M:%S%Z",
+          "%Y-%m-%dT%H:%M:%S%Q%Z",
+          rfc822DateFormat,
+          "%Y-%m-%d",
+          "%Y-%-m-%-d",
+          "%a, %d %b %Y %H:%M %Z", -- Mon, 14 Jul 2025 10:30 +0000
+          "%d %b %Y %H:%M:%S %Z", -- 17 Jul 2022 00:00:00 GMT
+          "%a, %d %B %Y %H:%M:%S %Z" -- Mon, 08 December 2025 11:07:49 +0000
+        ]
+   in asum $ map (\fmt -> parseTimeM True defaultTimeLocale fmt $ T.unpack ds) formats
 
 tryOrThrow :: (MonadIO m, Exception e1, MonadError e2 m) => (e1 -> e2) -> IO c -> m c
 tryOrThrow mkErr = liftIO . try >=> liftEither . mapLeft mkErr
