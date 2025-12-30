@@ -23,14 +23,14 @@ A Haskell tool that repeats entries from RSS/Atom feeds into new feeds. It fetch
 ## Features
 
 - **Multi-feed support**: Process multiple source feeds with individual configurations.
-- **Intelligent entry selection**: Uses exponential weighting to prioritize older entries.
+- **Weighted entry selection**: Uses exponential weighting to prioritize older entries.
 - **Caching**: Optionally cache fetched feeds to handle source feed unavailability.
 - **Filtering**: Filter entries by minimum age to avoid repeating recent content.
-- **Format conversion**: Automatically converts RSS/RDF feeds to Atom format.
+- **Multi-format support**: Supports RSS, Atom and RDF feed formats.
 
 ## About & Prerequisites
 
-This project is written in [Haskell](https://www.haskell.org/), a statically-typed functional programming language. You don't need Haskell experience to use this tool, but you'll need the Haskell compiler and build tools installed.
+This project is written in [Haskell](https://www.haskell.org/), a statically-typed functional programming language. You don't need Haskell experience to use this tool, but you'll need the Haskell compiler and build tools installed to build it.
 
 ### Installing Haskell
 
@@ -317,39 +317,6 @@ Create a YAML file with a list of feed tasks:
 - `minimumEntryAgeDays` (integer, required): Minimum age in days for entries to be eligible for selection.
 - `minRunGapDays` (integer, optional, default: 1): Minimum gap in days between consecutive runs for this feed. Prevents the feed from being processed more frequently than specified.
 - `maxEntryCountPerDomain` (integer, optional): Maximum number of entries to select from any single domain. When set, ensures diversity by limiting count of entries coming from one domains. If not specified, no domain-based limit is applied.
-
-## How It Works
-
-1. **Fetch & Parse**: Downloads and parses the source feed, converting to Atom format if needed.
-2. **Merge**: Combines source feed entries with existing output feed entries (deduplicating by link).
-3. **Filter**: Removes entries younger than `minimumEntryAgeDays`.
-4. **Select**: Randomly selects `repeatedEntryCount` entries using weighted sampling.
-   - Weight increases exponentially with entry age.
-   - This biases selection toward older entries, making them more likely to be repeated.
-   - If `maxEntryCountPerDomain` is set, limits selection to at most that many entries per domain.
-5. **Update**: Assigns new UUIDs and timestamps to the selected entries.
-6. **Write**: Writes combined feed (new selections + existing output entries) to Atom file.
-7. **Cache**: Optionally caches the fetched feed for use if future fetches fail.
-
-Run frequency is limited to once per day per feed to avoid thrashing output feeds.
-
-### Domain-Based Limits
-
-When `maxEntryCountPerDomain` is configured, the selection algorithm respects this limit. For example, with `maxEntryCountPerDomain: 1`:
-- If 5 entries qualify for selection but 3 come from `example.com`, only 1 from `example.com` will be selected.
-- Other domains' entries will be preferred to ensure diversity.
-
-This is useful for feeds that aggregate content from multiple sources (like link blogs), ensuring your output doesn't become dominated by entries from a single domain.
-
-## Project Structure
-
-- `src/Lib.hs`: Core library implementation
-- `app/Main.hs`: Executable entry point
-- `test/Main.hs`: Test suite
-- `feed-repeat.cabal`: Build configuration
-- `config.yaml`: Example configuration file
-- `nix/`: Nix build files
-- `nix/module.nix`: NixOS module
 
 ## License
 
