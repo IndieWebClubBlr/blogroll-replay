@@ -1,11 +1,13 @@
 module Lib where
 
 import Control.Applicative (asum, (<|>))
+import Control.Arrow ((>>>))
 import Control.Exception (Exception, IOException, displayException, try)
 import Control.Monad (forM, (>=>))
 import Control.Monad.Except (MonadError, liftEither)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Either.Combinators (mapLeft, maybeToRight)
+import Data.Function ((&))
 import Data.HashMap.Strict qualified as HM
 import Data.List (sortBy)
 import Data.List.Extra (nubOrdOn)
@@ -143,14 +145,16 @@ selectEntries n minAgeSeconds maxEntryCountPerDomain entries = do
       keys <- forM es $ \entry -> do
         r <- randomRIO (0, 1)
         return $ log r / computeWeight now entry
-      return
-        . limitEntries n (fromMaybe maxBound maxEntryCountPerDomain) mempty
-        . map fst
-        . sortBy (comparing (Down . snd))
-        $ zip es keys
+      zip es keys
+        & sortBy (comparing (Down . snd))
+        & map fst
+        & limitEntries n (fromMaybe maxBound maxEntryCountPerDomain) mempty
+        & return
 
     limitEntries remaining maxAllowed sourceCounts =
-      reverse . snd . foldl' step ((remaining, sourceCounts), [])
+      foldl' step ((remaining, sourceCounts), [])
+        >>> snd
+        >>> reverse
       where
         step ((0, counts), acc) _ = ((0, counts), acc)
         step ((rem, counts), acc) e =
@@ -180,10 +184,10 @@ parseDate ds =
    in asum $ map (\fmt -> parseTimeM True defaultTimeLocale fmt $ T.unpack ds) formats
 
 tryOrThrow :: (MonadIO m, Exception e1, MonadError e2 m) => (e1 -> e2) -> IO c -> m c
-tryOrThrow mkErr = liftIO . try >=> liftEither . mapLeft mkErr
+tryOrThrow mkErr = try >>> liftIO >=> mapLeft mkErr >>> liftEither
 
 fromMaybeOrThrow :: (MonadError e m) => e -> Maybe a -> m a
-fromMaybeOrThrow err = liftEither . maybeToRight err
+fromMaybeOrThrow err = maybeToRight err >>> liftEither
 
 extractDomain :: T.Text -> Maybe String
-extractDomain = fmap URI.uriRegName . (URI.parseURI . T.unpack >=> URI.uriAuthority)
+extractDomain = T.unpack >>> URI.parseURI >=> URI.uriAuthority >>> fmap URI.uriRegName
