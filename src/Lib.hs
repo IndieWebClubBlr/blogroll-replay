@@ -44,7 +44,8 @@ data FeedTask = FeedTask
     repeatedEntryCount :: Int,
     minimumEntryAgeDays :: Int,
     minRunGapDays :: Int,
-    maxEntryCountPerDomain :: Maybe Int
+    maxEntryCountPerDomain :: Maybe Int,
+    selectionAlpha :: Double
   }
   deriving (Show, Eq, Generic)
 
@@ -58,6 +59,7 @@ instance Aeson.FromJSON FeedTask where
       <*> v .: "minimumEntryAgeDays"
       <*> v .:? "minRunGapDays" .!= 1
       <*> v .:? "maxEntryCountPerDomain"
+      <*> v .:? "selectionAlpha" .!= 1
 
 data AppError
   = IOError IOException
@@ -169,9 +171,11 @@ selectEntries task entries = do
     computeWeight :: UTCTime -> Atom.Entry -> Double
     computeWeight now entry = case parseDate $ Atom.entryUpdated entry of
       Nothing -> 1
-      Just updated ->
-        let age = diffUTCTime now updated
-         in if age > 0 then exp (realToFrac $ age / (nominalDay * 365)) else 1
+      Just updated
+        | let age = diffUTCTime now updated,
+          age > 0 ->
+            exp (task.selectionAlpha * realToFrac (age / (nominalDay * 365)))
+      _ -> 1
 
     -- A-Res algorithm with per-domain limit
     select now es = do

@@ -116,6 +116,7 @@ The project includes a NixOS module (`nix/module.nix`) for easy integration into
         repeatedEntryCount = 3;
         minimumEntryAgeDays = 7;
         maxEntryCountPerDomain = 1;
+        selectionAlpha = 0.9;
       }
     ];
     
@@ -300,6 +301,7 @@ Create a YAML file with a list of feed tasks:
    repeatedEntryCount: 3
    minimumEntryAgeDays: 7
    maxEntryCountPerDomain: 1
+   selectionAlpha: 0.9
 
 - sourceFeedUrl: "https://another-site.com/rss.xml"
    outputFilename: "unique-id-2"
@@ -317,6 +319,7 @@ Create a YAML file with a list of feed tasks:
 - `minimumEntryAgeDays` (integer, required): Minimum age in days for entries to be eligible for selection.
 - `minRunGapDays` (integer, optional, default: 1): Minimum gap in days between consecutive runs for this feed. Prevents the feed from being processed more frequently than specified.
 - `maxEntryCountPerDomain` (integer, optional): Maximum number of entries to select from any single domain. When set, ensures diversity by limiting count of entries coming from one domains. If not specified, no domain-based limit is applied.
+- `selectionAlpha` (number, optional, default: 1): # Controls how strongly the weighted selection favors older entries. (optional, number, default: 1). Higher values make older entries much more likely to be selected. Set to 0 for uniform random selection regardless of age.
 
 ## License
 

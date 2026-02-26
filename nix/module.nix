@@ -58,6 +58,12 @@ in
               description = "Maximum number of entries to select from any single domain (optional)";
               example = 1;
             };
+            selectionAlpha = lib.mkOption {
+              type = lib.types.float;
+              default = 1.0;
+              description = "Controls how strongly the weighted selection favors older entries. Higher values make older entries much more likely to be selected. Set to 0 for uniform random selection.";
+              example = 0.5;
+            };
           };
         }
       );

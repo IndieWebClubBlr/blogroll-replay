@@ -21,7 +21,8 @@ mkTask count minAgeDays maxPerDomain =
       repeatedEntryCount = count,
       minimumEntryAgeDays = minAgeDays,
       minRunGapDays = 1,
-      maxEntryCountPerDomain = maxPerDomain
+      maxEntryCountPerDomain = maxPerDomain,
+      selectionAlpha = 1
     }
 
 main :: IO ()
@@ -562,36 +563,66 @@ main = hspec $ do
         Right atomFeed -> Atom.feedUpdated atomFeed `shouldBe` "2025-11-20T15:45:00Z"
 
   describe "selectEntries distribution" $ do
-    it "favors older entries according to exponential weight (QuickCheck)" $ do
+    let validYears = concat $ replicate 22 [1980 .. 2024]
+        entries =
+          zipWith
+            ( \idx year ->
+                let entryId = T.pack $ show year ++ "_" ++ show idx
+                 in ( Atom.nullEntry
+                        entryId
+                        (Atom.TextString $ T.pack $ "Entry from " ++ show year)
+                        (T.pack $ show year ++ "-01-01T00:00:00Z")
+                    )
+                      { Atom.entryLinks = [Atom.nullLink $ "http://example.com/" <> entryId]
+                      }
+            )
+            [1 ..]
+            validYears
+        task = mkTask 100 0 Nothing
+
+    it "favors older entries according to exponential weight when alpha = 1" $ do
       ioProperty $ do
-        let validYears = concat $ replicate 22 [1980 .. 2025]
-            entries =
-              zipWith
-                ( \idx y ->
-                    let entryId = T.pack $ show y ++ "_" ++ show idx
-                     in ( Atom.nullEntry
-                            entryId
-                            (Atom.TextString $ T.pack $ "Entry from " ++ show y)
-                            (T.pack $ show y ++ "-01-01T00:00:00Z")
-                        )
-                          { Atom.entryLinks = [Atom.nullLink $ "http://example.com/" <> entryId]
-                          }
-                )
-                [1 ..]
-                validYears
         if null entries
           then discard
           else do
-            selections <- replicateM 10 $ selectEntries (mkTask 100 0 Nothing) entries
+            selections <- replicateM 10 $ selectEntries task entries
             let selectedIds = [Atom.entryId e | sel <- selections, e <- sel]
                 selectedYears = map (read . T.unpack . T.takeWhile (/= '_')) selectedIds
 
             if null selectedYears
               then discard
               else do
-                let decadeCounts1980s = length $ filter (\y -> 1980 <= y && y < 1990) selectedYears
-                    yearCount = length selectedYears
+                let yearCount = length selectedYears
+                    decadeCounts1980s = length $ filter (\y -> 1980 <= y && y < 1990) selectedYears
                     pct1980s = (decadeCounts1980s * 100) `div` yearCount
+                    decadeCounts2010s = length $ filter (\y -> 2010 <= y && y < 2020) selectedYears
+                    pct2010s = (decadeCounts2010s * 100) `div` yearCount
+
                 return
-                  . cover 95 (pct1980s >= 95) "from 1980s"
+                  . cover 95 (pct1980s >= 95) "over 95% from 1980s"
+                  . cover 0 (pct2010s <= 1) "below 1% from 2010s"
                   $ pct1980s >= 95 -- number of items from 1980s is over 95%
+                    && pct2010s <= 1 -- number of items from 2010s is below 1%
+    it "does not favor older entries according to exponential weight when alpha = 0" $ do
+      ioProperty $ do
+        if null entries
+          then discard
+          else do
+            selections <- replicateM 10 $ selectEntries (task {selectionAlpha = 0}) entries
+            let selectedIds = [Atom.entryId e | sel <- selections, e <- sel]
+                selectedYears = map (read . T.unpack . T.takeWhile (/= '_')) selectedIds
+
+            if null selectedYears
+              then discard
+              else do
+                let yearCount = length selectedYears
+                    decadeCounts1980s = length $ filter (\y -> 1980 <= y && y < 1990) selectedYears
+                    pct1980s = (decadeCounts1980s * 100) `div` yearCount
+                    decadeCounts2010s = length $ filter (\y -> 2010 <= y && y < 2020) selectedYears
+                    pct2010s = (decadeCounts2010s * 100) `div` yearCount
+
+                return
+                  . cover 20 (pct1980s <= 30) "below 30% from 1980s"
+                  . cover 15 (pct2010s >= 18) "over 18% from 2010s"
+                  $ pct1980s <= 30 -- number of items from 1980s is below 30%
+                    && pct2010s >= 18 -- number of items from 2010s is over 18%
