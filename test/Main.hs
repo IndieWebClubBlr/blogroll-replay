@@ -9,6 +9,7 @@ import Lib
 import Test.Hspec
 import Test.QuickCheck hiding (NonNegative)
 import Text.Atom.Feed qualified as Atom
+import Text.Feed.Query qualified as Feed
 import Text.Feed.Types qualified as Feed
 import Text.RSS.Syntax qualified as RSS
 
@@ -30,6 +31,9 @@ newNonNegative' = fromMaybe (error "Impossible") . newNonNegative
 
 newURL' :: String -> URL
 newURL' = fromMaybe (error "Impossible") . newURL
+
+testFeedURL :: URL
+testFeedURL = newURL' "http://example.com/feed"
 
 main :: IO ()
 main = hspec $ do
@@ -304,7 +308,7 @@ main = hspec $ do
             (Atom.nullFeed "preserved-id" (Atom.TextString "Test") "2025-11-22T10:00:00Z")
               { Atom.feedEntries = [entry]
               }
-      result <- runExceptT $ feedToAtom (Feed.AtomFeed atomFeed)
+      result <- runExceptT $ feedToAtom testFeedURL (Feed.AtomFeed atomFeed)
       case result of
         Left _ -> expectationFailure "feedToAtom failed"
         Right feed -> do
@@ -313,7 +317,7 @@ main = hspec $ do
 
     it "preserves feed title when converting Atom" $ do
       let atomFeed = Atom.nullFeed "test-id" (Atom.TextString "My Feed Title") "2025-11-22T10:00:00Z"
-      result <- runExceptT $ feedToAtom (Feed.AtomFeed atomFeed)
+      result <- runExceptT $ feedToAtom testFeedURL (Feed.AtomFeed atomFeed)
       case result of
         Left _ -> expectationFailure "feedToAtom failed"
         Right feed -> case Atom.feedTitle feed of
@@ -327,7 +331,7 @@ main = hspec $ do
             (Atom.nullFeed "test-id" (Atom.TextString "Test") "2025-11-22T10:00:00Z")
               { Atom.feedEntries = [entry1, entry2]
               }
-      result <- runExceptT $ feedToAtom (Feed.AtomFeed atomFeed)
+      result <- runExceptT $ feedToAtom testFeedURL (Feed.AtomFeed atomFeed)
       case result of
         Left _ -> expectationFailure "feedToAtom failed"
         Right feed -> length (Atom.feedEntries feed) `shouldBe` 2
@@ -349,7 +353,7 @@ main = hspec $ do
             (RSS.nullRSS "My RSS Feed" "http://example.com")
               { RSS.rssChannel = channel
               }
-      result <- runExceptT $ feedToAtom (Feed.RSSFeed rss)
+      result <- runExceptT $ feedToAtom testFeedURL (Feed.RSSFeed rss)
       case result of
         Left err -> expectationFailure $ "feedToAtom failed: " <> show err
         Right atomFeed -> case Atom.feedTitle atomFeed of
@@ -379,7 +383,7 @@ main = hspec $ do
             (RSS.nullRSS "Multi Feed" "http://example.com")
               { RSS.rssChannel = channel
               }
-      result <- runExceptT $ feedToAtom (Feed.RSSFeed rss)
+      result <- runExceptT $ feedToAtom testFeedURL (Feed.RSSFeed rss)
       case result of
         Left err -> expectationFailure $ "feedToAtom failed: " <> show err
         Right atomFeed -> length (Atom.feedEntries atomFeed) `shouldBe` 2
@@ -401,7 +405,7 @@ main = hspec $ do
             (RSS.nullRSS "Dated Feed" "http://example.com")
               { RSS.rssChannel = channel
               }
-      result <- runExceptT $ feedToAtom (Feed.RSSFeed rss)
+      result <- runExceptT $ feedToAtom testFeedURL (Feed.RSSFeed rss)
       case result of
         Left err -> expectationFailure $ "feedToAtom failed: " <> show err
         Right atomFeed -> case Atom.feedEntries atomFeed of
@@ -423,7 +427,7 @@ main = hspec $ do
             (RSS.nullRSS "Test Feed" "http://example.com")
               { RSS.rssChannel = channel
               }
-      result <- runExceptT $ feedToAtom (Feed.RSSFeed rss)
+      result <- runExceptT $ feedToAtom testFeedURL (Feed.RSSFeed rss)
       case result of
         Left err -> expectationFailure $ "feedToAtom failed: " <> show err
         Right atomFeed -> case Atom.feedEntries atomFeed of
@@ -448,7 +452,7 @@ main = hspec $ do
             (RSS.nullRSS "Blog" "http://example.com")
               { RSS.rssChannel = channel
               }
-      result <- runExceptT $ feedToAtom (Feed.RSSFeed rss)
+      result <- runExceptT $ feedToAtom testFeedURL (Feed.RSSFeed rss)
       case result of
         Left err -> expectationFailure $ "feedToAtom failed: " <> show err
         Right atomFeed -> case Atom.feedEntries atomFeed of
@@ -476,7 +480,7 @@ main = hspec $ do
             (RSS.nullRSS "News" "http://example.com")
               { RSS.rssChannel = channel
               }
-      result <- runExceptT $ feedToAtom (Feed.RSSFeed rss)
+      result <- runExceptT $ feedToAtom testFeedURL (Feed.RSSFeed rss)
       case result of
         Left err -> expectationFailure $ "feedToAtom failed: " <> show err
         Right atomFeed -> case Atom.feedEntries atomFeed of
@@ -507,7 +511,7 @@ main = hspec $ do
             (RSS.nullRSS "Multi Feed" "http://example.com")
               { RSS.rssChannel = channel
               }
-      result <- runExceptT $ feedToAtom (Feed.RSSFeed rss)
+      result <- runExceptT $ feedToAtom testFeedURL (Feed.RSSFeed rss)
       case result of
         Left err -> expectationFailure $ "feedToAtom failed: " <> show err
         Right atomFeed -> do
@@ -542,7 +546,7 @@ main = hspec $ do
             (RSS.nullRSS "My Blog" feedLink)
               { RSS.rssChannel = channel
               }
-      result <- runExceptT $ feedToAtom (Feed.RSSFeed rss)
+      result <- runExceptT $ feedToAtom testFeedURL (Feed.RSSFeed rss)
       case result of
         Left err -> expectationFailure $ "feedToAtom failed: " <> show err
         Right atomFeed ->
@@ -563,10 +567,132 @@ main = hspec $ do
             (RSS.nullRSS "Dated Feed" "http://example.com")
               { RSS.rssChannel = channel
               }
-      result <- runExceptT $ feedToAtom (Feed.RSSFeed rss)
+      result <- runExceptT $ feedToAtom testFeedURL (Feed.RSSFeed rss)
       case result of
         Left err -> expectationFailure $ "feedToAtom failed: " <> show err
         Right atomFeed -> Atom.feedUpdated atomFeed `shouldBe` "2025-11-20T15:45:00Z"
+
+  describe "feedToAtom link normalization" $ do
+    let mkAtomFeedWithEntryLink linkHref =
+          let entry =
+                (Atom.nullEntry "id1" (Atom.TextString "Entry") "2025-11-22T10:00:00Z")
+                  { Atom.entryLinks = [(Atom.nullLink linkHref) {Atom.linkRel = Just $ Left "alternate"}]
+                  }
+           in (Atom.nullFeed "feed-id" (Atom.TextString "Test") "2025-11-22T10:00:00Z")
+                { Atom.feedEntries = [entry]
+                }
+        getFirstEntryLink atomFeed = case Atom.feedEntries atomFeed of
+          (entry : _) -> Feed.getItemLink $ Feed.AtomItem entry
+          _ -> Nothing
+        feedUrl = newURL' "https://example.com/blog/feed/"
+
+    it "preserves absolute http links" $ do
+      let atomFeed = mkAtomFeedWithEntryLink "http://other.com/article"
+      result <- runExceptT $ feedToAtom feedUrl (Feed.AtomFeed atomFeed)
+      case result of
+        Left err -> expectationFailure $ "feedToAtom failed: " <> show err
+        Right feed -> getFirstEntryLink feed `shouldBe` Just "http://other.com/article"
+
+    it "preserves absolute https links" $ do
+      let atomFeed = mkAtomFeedWithEntryLink "https://other.com/article"
+      result <- runExceptT $ feedToAtom feedUrl (Feed.AtomFeed atomFeed)
+      case result of
+        Left err -> expectationFailure $ "feedToAtom failed: " <> show err
+        Right feed -> getFirstEntryLink feed `shouldBe` Just "https://other.com/article"
+
+    it "resolves relative links against feed URL" $ do
+      let atomFeed = mkAtomFeedWithEntryLink "/posts/my-article"
+      result <- runExceptT $ feedToAtom feedUrl (Feed.AtomFeed atomFeed)
+      case result of
+        Left err -> expectationFailure $ "feedToAtom failed: " <> show err
+        Right feed -> getFirstEntryLink feed `shouldBe` Just "https://example.com/posts/my-article"
+
+    it "resolves relative links without leading slash" $ do
+      let atomFeed = mkAtomFeedWithEntryLink "posts/my-article"
+      result <- runExceptT $ feedToAtom feedUrl (Feed.AtomFeed atomFeed)
+      case result of
+        Left err -> expectationFailure $ "feedToAtom failed: " <> show err
+        Right feed -> getFirstEntryLink feed `shouldBe` Just "https://example.com/blog/posts/my-article"
+
+    it "resolves relative links with fragment against feed URL" $ do
+      let atomFeed = mkAtomFeedWithEntryLink "/posts/my-article#some"
+      result <- runExceptT $ feedToAtom feedUrl (Feed.AtomFeed atomFeed)
+      case result of
+        Left err -> expectationFailure $ "feedToAtom failed: " <> show err
+        Right feed -> getFirstEntryLink feed `shouldBe` Just "https://example.com/posts/my-article#some"
+
+    it "resolves relative links with query against feed URL" $ do
+      let atomFeed = mkAtomFeedWithEntryLink "/posts/my-article?some"
+      result <- runExceptT $ feedToAtom feedUrl (Feed.AtomFeed atomFeed)
+      case result of
+        Left err -> expectationFailure $ "feedToAtom failed: " <> show err
+        Right feed -> getFirstEntryLink feed `shouldBe` Just "https://example.com/posts/my-article?some"
+
+    it "resolves relative links with only fragment" $ do
+      let atomFeed = mkAtomFeedWithEntryLink "#my-article"
+      result <- runExceptT $ feedToAtom feedUrl (Feed.AtomFeed atomFeed)
+      case result of
+        Left err -> expectationFailure $ "feedToAtom failed: " <> show err
+        Right feed -> getFirstEntryLink feed `shouldBe` Just "https://example.com/blog/#my-article"
+
+    it "resolves relative links with only query" $ do
+      let atomFeed = mkAtomFeedWithEntryLink "?some"
+      result <- runExceptT $ feedToAtom feedUrl (Feed.AtomFeed atomFeed)
+      case result of
+        Left err -> expectationFailure $ "feedToAtom failed: " <> show err
+        Right feed -> getFirstEntryLink feed `shouldBe` Just "https://example.com/blog/?some"
+
+    it "percent-encodes spaces in absolute links" $ do
+      let atomFeed = mkAtomFeedWithEntryLink "http://other.com/my article"
+      result <- runExceptT $ feedToAtom feedUrl (Feed.AtomFeed atomFeed)
+      case result of
+        Left err -> expectationFailure $ "feedToAtom failed: " <> show err
+        Right feed -> getFirstEntryLink feed `shouldBe` Just "http://other.com/my%20article"
+
+    it "preserves empty links" $ do
+      let atomFeed = mkAtomFeedWithEntryLink ""
+      result <- runExceptT $ feedToAtom feedUrl (Feed.AtomFeed atomFeed)
+      case result of
+        Left err -> expectationFailure $ "feedToAtom failed: " <> show err
+        Right feed -> getFirstEntryLink feed `shouldBe` Just ""
+
+    it "normalizes feed-level links" $ do
+      let atomFeed =
+            (Atom.nullFeed "feed-id" (Atom.TextString "Test") "2025-11-22T10:00:00Z")
+              { Atom.feedLinks = [(Atom.nullLink "/feed.atom") {Atom.linkRel = Just $ Left "self"}]
+              }
+      result <- runExceptT $ feedToAtom feedUrl (Feed.AtomFeed atomFeed)
+      case result of
+        Left err -> expectationFailure $ "feedToAtom failed: " <> show err
+        Right feed -> case Atom.feedLinks feed of
+          (link : _) -> Atom.linkHref link `shouldBe` "https://example.com/feed.atom"
+          _ -> expectationFailure "No feed links found"
+
+    it "resolves relative RSS item links against feed URL" $ do
+      let item =
+            (RSS.nullItem "RSS Item")
+              { RSS.rssItemLink = Just "/rss-article",
+                RSS.rssItemPubDate = Just "Sat, 22 Nov 2025 10:00:00 GMT"
+              }
+          channel =
+            (RSS.nullChannel "Feed" "http://example.com")
+              { RSS.rssPubDate = Just "Sat, 22 Nov 2025 10:00:00 GMT",
+                RSS.rssItems = [item]
+              }
+          rss =
+            (RSS.nullRSS "Feed" "http://example.com")
+              { RSS.rssChannel = channel
+              }
+      result <- runExceptT $ feedToAtom feedUrl (Feed.RSSFeed rss)
+      case result of
+        Left err -> expectationFailure $ "feedToAtom failed: " <> show err
+        Right atomFeed -> case Atom.feedEntries atomFeed of
+          (entry : _) ->
+            let altLinks = filter (\l -> Atom.linkRel l == Just (Left "alternate")) (Atom.entryLinks entry)
+             in case altLinks of
+                  (link : _) -> Atom.linkHref link `shouldBe` "https://example.com/rss-article"
+                  _ -> expectationFailure "No alternate link found"
+          _ -> expectationFailure "No entries found"
 
   describe "selectEntries distribution" $ do
     let validYears = concat $ replicate 22 [1980 .. 2024]

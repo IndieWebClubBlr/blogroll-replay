@@ -279,7 +279,7 @@ fetchFeed url modTime = do
         >>> fromMaybeOrThrow FeedNotModifiedError
         >=> Feed.parseFeedSource
         >>> fromMaybeOrThrow (FeedParseError url.toString)
-        >=> feedToAtom
+        >=> feedToAtom url
 
     addHeaders request =
       request

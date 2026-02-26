@@ -47,6 +47,12 @@ import GHC.Generics (Generic)
 import GHC.Records (HasField (..))
 import Network.HTTP.Client qualified as HTTP
 import Network.URI qualified as URI
+import System.FilePath
+  ( addTrailingPathSeparator,
+    dropFileName,
+    dropTrailingPathSeparator,
+    takeDirectory,
+  )
 import System.Random (randomRIO)
 import Text.Atom.Feed qualified as Atom
 import Text.Feed.Query qualified as Feed
@@ -143,9 +149,17 @@ instance Show AppError where
     FeedNotModifiedError -> "Feed not modified"
     HTTPError err -> "HTTP error: " <> displayException err
 
-feedToAtom :: (MonadIO m, MonadError AppError m) => Feed.Feed -> m Atom.Feed
-feedToAtom (Feed.AtomFeed af) = return af
-feedToAtom feed = do
+feedToAtom :: (MonadIO m, MonadError AppError m) => URL -> Feed.Feed -> m Atom.Feed
+feedToAtom feedURL (Feed.AtomFeed af@Atom.Feed {feedLinks, feedEntries}) =
+  return $
+    af
+      { Atom.feedLinks = map (normalizeLink feedURL) feedLinks,
+        Atom.feedEntries =
+          map
+            (\entry@Atom.Entry {entryLinks} -> entry {Atom.entryLinks = map (normalizeLink feedURL) entryLinks})
+            feedEntries
+      }
+feedToAtom feedURL feed = do
   feedUuid <- mkUuidUrn
   now <- liftIO getCurrentTime
   entries <-
@@ -159,7 +173,7 @@ feedToAtom feed = do
       mFeedUpdated = updateDate <|> pubDate <|> listToMaybe (map Atom.entryUpdated entries)
 
   feedUpdated <- fromMaybeOrThrow InvalidFeedUpdatedError mFeedUpdated
-  return $
+  feedToAtom feedURL . Feed.AtomFeed $
     (Atom.nullFeed feedId (Atom.TextString title) feedUpdated)
       { Atom.feedEntries = entries,
         Atom.feedAuthors =
@@ -211,6 +225,24 @@ feedToAtom feed = do
               Atom.entryRights = Atom.HTMLString <$> Feed.getItemRights item,
               Atom.entrySummary = Atom.HTMLString <$> Feed.getItemSummary item
             }
+
+normalizeLink :: URL -> Atom.Link -> Atom.Link
+normalizeLink feedUrl link@Atom.Link {linkHref} =
+  link {Atom.linkHref = normalizeLinkURL feedUrl linkHref}
+  where
+    normalizeLinkURL (URL feedUrl) link
+      | T.null link = link
+      | ("http://" `T.isPrefixOf` link || "https://" `T.isPrefixOf` link)
+          && not ("http://localhost:" `T.isPrefixOf` link) =
+          T.pack $ URI.escapeURIString URI.isAllowedInURI $ T.unpack link
+      | Just feedUri <- URI.parseURI feedUrl,
+        Just linkUri <- URI.parseURIReference (T.unpack link) =
+          let baseUri = feedUri {URI.uriPath = dirPath $ URI.uriPath feedUri}
+           in T.pack $ show $ linkUri `URI.relativeTo` baseUri
+      | otherwise = link
+
+    dirPath =
+      dropFileName >>> dropTrailingPathSeparator >>> takeDirectory >>> addTrailingPathSeparator
 
 mergeFeeds :: Atom.Feed -> Atom.Feed -> Atom.Feed
 mergeFeeds feed1 feed2 =
