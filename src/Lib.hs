@@ -202,9 +202,9 @@ mergeFeeds feed1 feed2 =
       uniqueEntries = nubOrdOn (Feed.getItemLink . Feed.AtomItem) sortedEntries
    in feed1 {Atom.feedEntries = uniqueEntries}
 
-selectEntries :: FeedTask -> [Atom.Entry] -> IO [Atom.Entry]
+selectEntries :: (MonadIO m) => FeedTask -> [Atom.Entry] -> m [Atom.Entry]
 selectEntries task entries = do
-  now <- getCurrentTime
+  now <- liftIO getCurrentTime
   select now $ filter (isOldEnough now) entries
   where
     minAgeSeconds = fromIntegral task.minimumEntryAgeDays.toNum * nominalDay
@@ -231,7 +231,7 @@ selectEntries task entries = do
       zip es keys
         & sortBy (comparing (Down . snd))
         & map fst
-        & limitEntries (fromMaybe maxBound (unPositive <$> task.maxEntryCountPerDomain)) mempty
+        & limitEntries (maybe maxBound unPositive task.maxEntryCountPerDomain) mempty
         & return
 
     limitEntries maxAllowed sourceCounts =

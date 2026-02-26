@@ -2,7 +2,7 @@ module Main where
 
 import Control.Arrow ((>>>))
 import Control.Exception (IOException, displayException, try)
-import Control.Monad (forM, forM_, when)
+import Control.Monad (forM, forM_, when, (>=>))
 import Control.Monad.Except (ExceptT, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (ReaderT, ask, runReaderT)
@@ -187,7 +187,7 @@ runTask task = do
   let minRunGapSeconds = fromIntegral task.minRunGapDays.toNum * Time.nominalDay - timerTolerance
   if Time.diffUTCTime now outputFeedUpdated < minRunGapSeconds
     then logMsg INF $ "Skipping run for URL: " <> url
-    else do
+    else
       fetchCacheFeed task.saveSourceFeedEntries task.sourceFeedUrl outputFeedUpdated
         >>= processSourceFeed task outputFeed
 
@@ -205,7 +205,7 @@ processSourceFeed task mOutputFeed sourceFeed = do
   now <- liftIO Time.getCurrentTime
   let timestamp = T.pack $ iso8601Show now
   selectedEntries <-
-    liftIO (selectEntries task allEntries)
+    selectEntries task allEntries
       >>= traverse
         ( \e -> do
             entryId <- mkUuidUrn
@@ -252,10 +252,10 @@ fetchCacheFeed saveSourceFeedEntries (URL url) feedUpdated = do
   freshOrCachedFeed <-
     (Right <$> fetchFeed url feedUpdated) `catchError` \err -> do
       case err of
-        FeedNotModifiedError -> logMsg DBG "Feed not modified, using cached"
+        FeedNotModifiedError -> logMsg DBG $ "Feed not modified: " <> url <> ", using cached"
         _ ->
           logMsg WRN $
-            "Unable to fetch fresh feed for URL: " <> url <> ", using cached: " <> show err
+            "Unable to fetch fresh feed: " <> url <> ", using cached: " <> show err
       Left <$> parseAtomFile cacheFilePath
   mergedFeed <-
     if saveSourceFeedEntries
@@ -276,16 +276,23 @@ fetchCacheFeed saveSourceFeedEntries (URL url) feedUpdated = do
 
 fetchFeed :: String -> UTCTime -> App Atom.Feed
 fetchFeed url modTime = do
-  atomFeed <-
-    tryOrThrow HTTPError (HTTP.parseRequest url)
-      >>= (addHeaders >>> HTTP.httpLBS >>> tryOrThrow HTTPError)
-      >>= (checkForStatusNotModified >>> fromMaybeOrThrow FeedNotModifiedError)
-      >>= (Feed.parseFeedSource >>> fromMaybeOrThrow (FeedParseError url))
-      >>= feedToAtom
+  atomFeed <- fetchAndParse url
   logMsg DBG $
     "Fetched feed with " <> show (length $ Atom.feedEntries atomFeed) <> " entries"
   return atomFeed
   where
+    fetchAndParse =
+      HTTP.parseRequest
+        >>> tryOrThrow HTTPError
+        >=> addHeaders
+        >>> HTTP.httpLBS
+        >>> tryOrThrow HTTPError
+        >=> checkForStatusNotModified
+        >>> fromMaybeOrThrow FeedNotModifiedError
+        >=> Feed.parseFeedSource
+        >>> fromMaybeOrThrow (FeedParseError url)
+        >=> feedToAtom
+
     addHeaders request =
       request
         { HTTP.responseTimeout = HTTP.responseTimeoutMicro requestTimeoutMicros,
@@ -306,9 +313,7 @@ fetchFeed url modTime = do
 
 parseAtomFile :: FilePath -> App Atom.Feed
 parseAtomFile filePath = do
-  feed <-
-    tryOrThrow IOError (readFile filePath)
-      >>= fromMaybeOrThrow (FeedParseError filePath) . Feed.parseFeedString
+  feed <- readAndParse filePath
   case feed of
     Feed.AtomFeed af -> do
       logMsg DBG $
@@ -316,6 +321,12 @@ parseAtomFile filePath = do
           <> (show (length $ Feed.getFeedItems feed) <> " entries")
       return af
     _ -> throwError $ InvalidFormatError "Atom" filePath
+  where
+    readAndParse =
+      readFile
+        >>> tryOrThrow IOError
+        >=> Feed.parseFeedString
+        >>> fromMaybeOrThrow (FeedParseError filePath)
 
 logMsg :: LogLevel -> String -> App ()
 logMsg level msg = do
