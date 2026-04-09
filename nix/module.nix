@@ -111,6 +111,10 @@ in
     };
 
     enableSSL = lib.mkEnableOption "SSL for Nginx";
+
+    verbose = lib.mkEnableOption "verbose logging";
+
+    quiet = lib.mkEnableOption "quiet logging (only warnings and errors)";
   };
 
   config = lib.mkIf cfg.enable {
@@ -119,6 +123,10 @@ in
         assertion =
           if cfg.enableNginx then cfg.virtualHost != null && cfg.virtualHostPath != null else true;
         message = "Nginx is enabled but the virtualHost and/or virtualHostPath options are not set.";
+      }
+      {
+        assertion = !(cfg.verbose && cfg.quiet);
+        message = "Both verbose and quiet options are enabled at the same time.";
       }
     ];
     users.users.${serviceName} = {
@@ -152,7 +160,14 @@ in
         RUNNING_UNDER_SYSTEMD = "1";
       };
       serviceConfig = {
-        ExecStart = "${feedRepeatPkg}/bin/feed-repeat --config ${configFile} --output-dir ${cfg.outputDir} --cache-dir ${cfg.cacheDir}";
+        ExecStart = ''
+          ${feedRepeatPkg}/bin/feed-repeat \
+            --config ${configFile} \
+            --output-dir ${cfg.outputDir} \
+            --cache-dir ${cfg.cacheDir} \
+            ${lib.optionalString cfg.verbose "--verbose"} \
+            ${lib.optionalString cfg.quiet "--quiet"}
+        '';
         User = serviceName;
         Group = serviceName;
         Type = "oneshot";

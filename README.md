@@ -288,6 +288,8 @@ feed-repeat --config config.yaml --output-dir ./output --cache-dir ./cache
 - `--output-dir DIR`: Directory where output Atom files will be written (required).
 - `--cache-dir DIR`: Directory for cached Atom files (default: current directory).
 - `--validate`: Only validate the config file and exit.
+- `--verbose`: Enable all logging
+- `--quiet`: Enable only warning and error logging
 
 ## Configuration
 

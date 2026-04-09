@@ -6,8 +6,10 @@ import Control.Monad (forM_, unless, void, when, (>=>))
 import Control.Monad.Except (ExceptT, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Logger
-  ( LoggingT,
+  ( LogLevel (..),
+    LoggingT,
     MonadLogger,
+    filterLogger,
     logDebugN,
     logErrorN,
     logInfoN,
@@ -72,7 +74,9 @@ data Options = Options
   { configPath :: FilePath,
     outputDir :: FilePath,
     cacheDir :: FilePath,
-    validateOnly :: Bool
+    validateOnly :: Bool,
+    verbose :: Bool,
+    quiet :: Bool
   }
 
 newtype Env = Env {options :: Options}
@@ -130,9 +134,11 @@ optionsParser =
           <> Opt.help "Directory where cached Atom files will be stored"
       )
     <*> Opt.switch
-      ( Opt.long "validate"
-          <> Opt.help "Only validate the config file and exit"
-      )
+      (Opt.long "validate" <> Opt.help "Only validate the config file and exit")
+    <*> Opt.switch
+      (Opt.long "verbose" <> Opt.help "Enable all logging")
+    <*> Opt.switch
+      (Opt.long "quiet" <> Opt.help "Enable only warning and error logging")
 
 run :: Env -> IO ()
 run env =
@@ -144,11 +150,23 @@ run env =
         Nothing -> exitFailure
         Just validated
           | env.options.validateOnly ->
-              logInfoIO $ "Config valid: " <> show (length validated) <> " tasks"
-          | otherwise -> forM_ validated $ \task ->
-              runStdoutLoggingT (runReaderT (runExceptT $ runTask task) env) >>= \case
+              unless env.options.quiet $ do
+                logInfoIO $ "Config valid: " <> show (length validated) <> " tasks"
+          | otherwise -> forM_ validated $ \task -> do
+              res <-
+                runStdoutLoggingT
+                  . filterLogger enableLogging
+                  . flip runReaderT env
+                  . runExceptT
+                  $ runTask task
+              case res of
                 Left err -> logErrorIO $ show err
                 Right _ -> return ()
+  where
+    enableLogging _ level
+      | env.options.quiet = level >= LevelWarn
+      | env.options.verbose = True
+      | otherwise = level >= LevelInfo
 
 validateTasks :: [FeedTask] -> IO (Maybe [FeedTask])
 validateTasks tasks = do
