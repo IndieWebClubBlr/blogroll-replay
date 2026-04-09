@@ -233,13 +233,18 @@ normalizeLink feedUrl link@Atom.Link {linkHref} =
     normalizeLinkURL (URL feedUrl) link
       | T.null link = link
       | ("http://" `T.isPrefixOf` link || "https://" `T.isPrefixOf` link)
-          && not ("http://localhost:" `T.isPrefixOf` link) =
+          && not (isLocalhost link) =
           T.pack $ URI.escapeURIString URI.isAllowedInURI $ T.unpack link
       | Just feedUri <- URI.parseURI feedUrl,
         Just linkUri <- URI.parseURIReference (T.unpack link) =
           let baseUri = feedUri {URI.uriPath = dirPath $ URI.uriPath feedUri}
            in T.pack $ show $ linkUri `URI.relativeTo` baseUri
       | otherwise = link
+
+    isLocalhost link =
+      any
+        (`T.isPrefixOf` link)
+        [s <> h | s <- ["http://", "https://"], h <- ["localhost", "127.0.0.1", "[::1]"]]
 
     dirPath =
       dropFileName >>> dropTrailingPathSeparator >>> takeDirectory >>> addTrailingPathSeparator
