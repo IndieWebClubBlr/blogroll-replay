@@ -41,9 +41,3 @@
   saveSourceFeedEntries: true
   repeatedEntryCount: 1
   minimumEntryAgeDays: 14
-
-- sourceFeedUrl: "https://akils.mataroa.blog/rss/"
-  outputFilename: "12347w6v5u4t3s2r1q0p9o8n7m6l123"
-  saveSourceFeedEntries: true
-  repeatedEntryCount: 1
-  minimumEntryAgeDays: 14
