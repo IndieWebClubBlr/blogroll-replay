@@ -220,6 +220,12 @@ The Docker image includes:
 - CA certificates for HTTPS feed fetching
 - Mount points for configuration, output, and cache directories
 
+Alternatively, you can pull the pre-built image from GHCR:
+
+```
+docker pull ghcr.io/abhin4v/feed-repeat:latest
+```
+
 #### Scheduling Runs
 
 Since the container runs once and exits, you need to schedule it externally:
