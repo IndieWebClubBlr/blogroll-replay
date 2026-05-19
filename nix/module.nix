@@ -7,13 +7,22 @@
 let
   serviceName = "feed-repeat";
   cfg = config.services.${serviceName};
-  feedRepeatPkg = import ./release.nix { static = true; };
 
   configFile = (pkgs.formats.yaml { }).generate "${serviceName}.yaml" cfg.config;
 in
 {
   options.services.feed-repeat = {
     enable = lib.mkEnableOption "feed-repeat service";
+
+    package = lib.mkOption {
+      type = lib.types.package;
+      default = import ./release.nix {
+        nixpkgs = pkgs.path;
+        system = pkgs.system;
+      };
+      defaultText = "The feed-repeat Nix package provided in this repo.";
+      description = "The feed-repeat package.";
+    };
 
     config = lib.mkOption {
       type = lib.types.listOf (
@@ -153,7 +162,7 @@ in
       startAt = cfg.timerOnCalendar;
       restartIfChanged = true;
       restartTriggers = [
-        feedRepeatPkg
+        cfg.package
         configFile
       ];
       environment = {
@@ -161,7 +170,7 @@ in
       };
       serviceConfig = {
         ExecStart = ''
-          ${feedRepeatPkg}/bin/feed-repeat \
+          ${cfg.package}/bin/feed-repeat \
             --config ${configFile} \
             --output-dir ${cfg.outputDir} \
             --cache-dir ${cfg.cacheDir} \
