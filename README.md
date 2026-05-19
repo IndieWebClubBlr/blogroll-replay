@@ -17,6 +17,7 @@ A Haskell tool that repeats entries from RSS/Atom feeds into new feeds. It fetch
 - [CLI Usage](#cli-usage)
 - [Configuration](#configuration)
 - [License](#license)
+- [Contributing](#contributing)
 
 ## Features
 
@@ -316,3 +317,9 @@ See `config.yaml` for all available parameters and their meanings.
 ## License
 
 MIT
+
+## Contributing
+
+I consider this is a done software. Maybe some day when [JSONFeed](https://www.jsonfeed.org/) gets popular, I'd consider adding support for it. Other than that, I don't forsee adding any new features. I'll keep doing bug fixes, security fixes and dependency upgrades.
+
+Please feel free to create an issue if you find a bug. I'm not inclined to accept pull requests unless there is a very compelling reason.
