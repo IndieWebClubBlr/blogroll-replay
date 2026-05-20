@@ -1,7 +1,7 @@
 module Main where
 
 import Control.Arrow ((>>>))
-import Control.Exception (IOException, displayException, throwIO, try)
+import Control.Exception (IOException, displayException, throwIO, toException, try)
 import Control.Monad (forM_, unless, void, when, (>=>))
 import Control.Monad.Except (ExceptT, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (liftIO)
@@ -37,7 +37,7 @@ import Data.Version (showVersion)
 import Data.Yaml qualified as Yaml
 import Lib
 import Network.HTTP.Client qualified as HTTP
-import Network.HTTP.Simple qualified as HTTP
+import Network.HTTP.Client.TLS qualified as HTTP
 import Network.HTTP.Types qualified as HTTP
 import Options.Applicative qualified as Opt
 import PackageInfo_feed_repeat qualified as PI
@@ -45,6 +45,7 @@ import System.Directory (createDirectoryIfMissing, renameFile)
 import System.Exit (exitFailure)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose)
+import System.IO.Error (illegalOperationErrorType, mkIOError)
 import System.IO.Temp (withTempFile)
 import System.Posix.Files
   ( groupReadMode,
@@ -79,7 +80,7 @@ data Options = Options
     quiet :: Bool
   }
 
-newtype Env = Env {options :: Options}
+data Env = Env {options :: Options, httpManager :: HTTP.Manager}
 
 type App a = ExceptT AppError (ReaderT Env (LoggingT IO)) a
 
@@ -88,6 +89,9 @@ requestTimeoutMicros = 30_000_000 -- 30 sec
 
 timerTolerance :: NominalDiffTime
 timerTolerance = 5 * 60 -- 5 minutes tolerance for systemd timer imprecision
+
+maxBodySize :: Int
+maxBodySize = 10 * 1024 * 1024 -- 10 MB
 
 main :: IO ()
 main = do
@@ -103,7 +107,8 @@ main = do
             <> Opt.header ("feed-repeat version " <> showVersion PI.version)
             <> Opt.footer (PI.homepage <> " © " <> PI.copyright)
         )
-  let env = Env options
+  man <- HTTP.newTlsManager
+  let env = Env options man
   createDirs [options.outputDir, options.cacheDir]
   run env
   where
@@ -293,16 +298,17 @@ fetchCacheFeed saveSourceFeedEntries url feedUpdated = do
 
 fetchFeed :: URL -> UTCTime -> App Atom.Feed
 fetchFeed url modTime = do
-  atomFeed <- fetchAndParse url.toString
+  env <- ask
+  atomFeed <- fetchAndParse env.httpManager url.toString
   logDebug $
     "Fetched feed with " <> show (length $ Atom.feedEntries atomFeed) <> " entries"
   return atomFeed
   where
-    fetchAndParse =
+    fetchAndParse man =
       HTTP.parseRequest
         >>> tryOrThrow HTTPError
         >=> addHeaders
-        >>> fetchWithRetry
+        >>> fetchWithRetry man
         >>> tryOrThrow HTTPError
         >=> checkForStatusNotModified
         >>> fromMaybeOrThrow FeedNotModifiedError
@@ -324,15 +330,15 @@ fetchFeed url modTime = do
                  ]
         }
 
-    fetchWithRetry =
+    fetchWithRetry man =
       Retry.retrying
         (Retry.capDelay 60_000_000 $ Retry.exponentialBackoff 1_000_000 <> Retry.limitRetries 3)
         (const $ pure . HTTP.statusIsServerError . HTTP.responseStatus)
         . const
-        . fetch
+        . fetch man
 
-    fetch request =
-      HTTP.httpLBS $
+    fetch man request =
+      httpLBS man $
         request
           { HTTP.checkResponse = \req resp -> do
               let status = HTTP.responseStatus resp
@@ -342,6 +348,32 @@ fetchFeed url modTime = do
                 let ex = HTTP.StatusCodeException resp' (LBS.toStrict chunk)
                 throwIO $ HTTP.HttpExceptionRequest req ex
           }
+
+    httpLBS man req = do
+      HTTP.withResponse req man $ \res -> do
+        bss <- consumeRespBodyWithLimit req $ HTTP.responseBody res
+        return res {HTTP.responseBody = LBS.fromChunks bss}
+
+    consumeRespBodyWithLimit req brRead = go 0 id
+      where
+        go size front = do
+          x <- brRead
+          if BS.null x
+            then return $ front []
+            else do
+              let size' = size + BS.length x
+              when (size' > maxBodySize)
+                $ throwIO
+                  . HTTP.HttpExceptionRequest req
+                  . HTTP.InternalException
+                  . toException
+                $ mkIOError
+                  illegalOperationErrorType
+                  ("Feed body exceeded " <> show maxBodySize <> " bytes")
+                  Nothing
+                  Nothing
+
+              go size' (front . (x :))
 
     checkForStatusNotModified resp
       | HTTP.responseStatus resp == HTTP.status304 = Nothing

@@ -78,7 +78,7 @@ executable feed-repeat
     , feed
     , feed-repeat
     , http-client
-    , http-conduit
+    , http-client-tls
     , http-types
     , monad-logger
     , mtl
