@@ -56,6 +56,7 @@ import System.Posix.Files
     setFileMode,
     unionFileModes,
   )
+import System.Posix.Types (FileMode)
 import Text.Atom.Feed qualified as Atom
 import Text.Feed.Export qualified as Feed
 import Text.Feed.Import qualified as Feed
@@ -94,6 +95,9 @@ timerTolerance = 5 * 60 -- 5 minutes tolerance for systemd timer imprecision
 
 maxBodySize :: Int
 maxBodySize = 10 * 1024 * 1024 -- 10 MB
+
+fileMode :: FileMode
+fileMode = foldr1 unionFileModes [ownerReadMode, ownerWriteMode, groupReadMode]
 
 main :: IO ()
 main = do
@@ -275,9 +279,6 @@ processSourceFeed task mOutputFeed sourceFeed = do
       env <- ask
       let outputPath = env.options.outputDir </> task.outputFilename <> ".atom"
       writeFile outputPath content
-      tryOrThrow IOError $
-        setFileMode outputPath $
-          foldr1 unionFileModes [ownerReadMode, ownerWriteMode, groupReadMode]
       logDebug $ "Wrote to: " <> outputPath
       logInfo $ "Processed " <> show url <> " successfully"
 
@@ -432,3 +433,4 @@ writeFile fp content = do
     BS.hPutStr tmpH . TE.encodeUtf8 $ TL.toStrict content
     hClose tmpH
     renameFile tmpFP fp
+    setFileMode fp fileMode
