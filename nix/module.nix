@@ -224,10 +224,13 @@ in
         DevicePolicy = "closed";
         KeyringMode = "private";
         LockPersonality = true;
+        MemoryDenyWriteExecute = true;
         NoNewPrivileges = true;
         PrivateDevices = true;
         PrivateMounts = true;
         PrivateTmp = true;
+        PrivateUsers = true;
+        ProcSubset = "pid";
         ProtectClock = true;
         ProtectControlGroups = true;
         ProtectHome = true;
@@ -235,7 +238,12 @@ in
         ProtectKernelLogs = true;
         ProtectKernelModules = true;
         ProtectKernelTunables = true;
-        ProtectSystem = "full";
+        ProtectProc = "invisible";
+        ProtectSystem = "strict";
+        ReadWritePaths = [
+          cfg.outputDir
+          cfg.cacheDir
+        ];
         RemoveIPC = true;
         RestrictAddressFamilies = [
           "AF_UNIX"
@@ -244,16 +252,14 @@ in
         ];
         RestrictNamespaces = true;
         RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        SystemCallArchitectures = "native";
         SystemCallFilter = [
-          "~@clock"
-          "~@debug"
-          "~@module"
-          "~@mount"
-          "~@obsolete"
-          "~@reboot"
-          "~@setuid"
-          "~@swap"
+          "@system-service"
+          "~@privileged"
+          "~@resources"
         ];
+        UMask = "0027";
       };
     };
 
