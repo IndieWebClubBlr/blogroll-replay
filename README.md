@@ -1,11 +1,12 @@
 # feed-repeat
 
-A Haskell tool that repeats entries from RSS/Atom feeds into new feeds. It fetches entries from source feeds, filters them by age, and selects a random subset for inclusion in output feeds using weighted sampling where older entries have higher priority.
+A Haskell tool that repeats entries from RSS/Atom feeds into new feeds. It fetches entries from source feeds, and selects a random subset using weighted sampling where older entries have higher priority, and inserts them in output feeds.
 
 ## Table of Contents
 
 - [Features](#features)
-- [About & Prerequisites](#about--prerequisites)
+- [Installation](#installation)
+- [Prerequisites](#prerequisites)
 - [Building](#building)
   - [Build with Cabal](#build-with-cabal)
   - [Build with Nix](#build-with-nix)
@@ -21,39 +22,23 @@ A Haskell tool that repeats entries from RSS/Atom feeds into new feeds. It fetch
 
 ## Features
 
-- **Multi-feed support**: Process multiple source feeds with individual configurations.
-- **Weighted entry selection**: Uses exponential weighting to prioritize older entries.
-- **Caching**: Optionally cache fetched feeds to handle source feed unavailability.
-- **Filtering**: Filter entries by minimum age to avoid repeating recent content.
-- **Multi-format support**: Supports RSS, Atom and RDF feed formats.
+- Processes multiple source feeds with individual configurations.
+- Uses exponential weighting to prioritize older entries.
+- Caches fetched feeds to handle source feed unavailability.
+- Filters entries by minimum age to avoid repeating recent content.
+- Supports RSS, Atom and RDF feed formats.
 
-## About & Prerequisites
+## Installation
 
-This project is written in [Haskell](https://www.haskell.org/), a statically-typed functional programming language. You don't need Haskell experience to use this tool, but you'll need the Haskell compiler and build tools installed to build it.
+`feed-repeat` is available as statically-linked binaries for AArch64 and AMD64 architectures in the releases. It is also available as a [Docker image](https://github.com/abhin4v/feed-repeat/pkgs/container/feed-repeat) in the Github Container Repo.
 
-### Installing Haskell
+## Prerequisites
 
-The easiest way to install Haskell is via [GHCup](https://www.haskell.org/ghcup/):
+This project is written in [Haskell](https://www.haskell.org/). You don't need Haskell experience to use this tool, but you'll need the Haskell compiler and build tools installed to build it.
 
-```bash
-# Install GHCup (follow the prompts)
-curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh
-```
+The easiest way to install Haskell is via [GHCup](https://www.haskell.org/ghcup/). Run GHCup to install GHC (9.10+) and Cabal (3.4+). Alternatively, check your system's package manager for pre-built packages.
 
-Run GHCup to install GHC (the compiler) and Cabal (the build tool). Alternatively, check your system's package manager (e.g., `apt`, `brew`, `pacman`) for pre-built packages.
-
-### Building Prerequisites
-
-- **GHC 9.10+** (Haskell compiler)
-- **Cabal 3.4+** (Build tool)
-- **Nix** (optional, for `nix` builds and NixOS module support)
-
-Verify your installation:
-
-```bash
-ghc --version
-cabal --version
-```
+[Nix](https://nixos.org) is optional. It is required for `nix` builds and NixOS module support.
 
 ## Building
 
@@ -73,13 +58,13 @@ cabal build
 
 ### Build with Nix
 
-Enter the Nix development environment:
+Enter the Nix shell:
 
 ```bash
 nix-shell
 ```
 
-Available scripts in Nix shell (defined in `scripts.nix`):
+Run the scripts available in Nix shell:
 
 ```bash
 # Build the project
@@ -95,7 +80,7 @@ run
 
 ## Usage
 
-This project can be used as a Nix module or a Systemd service or a Docker container.
+This project can be used as a Nix module, a Systemd service or a Docker container.
 
 ### Using as a NixOS Module
 
@@ -121,11 +106,11 @@ The project includes a NixOS module (`nix/module.nix`) for easy integration into
       }
     ];
     
-    # Output and cache directories (defaults shown)
+    # Output and cache directories
     outputDir = "/var/lib/feed-repeat";
     cacheDir = "/var/cache/feed-repeat";
     
-    # Run frequency (systemd calendar expression, default: daily)
+    # Run frequency
     timerOnCalendar = "daily";
     
     # Optional: serve feeds via Nginx
@@ -142,54 +127,54 @@ The module automatically:
 - Sets up user/group with appropriate permissions.
 - Generates the configuration file from your NixOS settings.
 - Optionally configures Nginx to serve the output feeds.
-- Applies strict security hardening to the service.
 
 ### Using as a systemd Service
 
 For non-NixOS systems, a systemd service file (`configs/feed-repeat.service`) is provided. To set it up:
 
-1. **Create user and group**:
+1. Create user and group:
     ```bash
     sudo useradd -r -s /bin/false feed-repeat
     ```
 
-2. **Create required directories**:
+2. Create required directories:
     ```bash
     sudo mkdir -p /var/lib/feed-repeat /var/cache/feed-repeat /etc/feed-repeat
     sudo chown feed-repeat:feed-repeat /var/lib/feed-repeat /var/cache/feed-repeat
     sudo chmod 750 /var/lib/feed-repeat /var/cache/feed-repeat
     ```
 
-3. **Add web server user to feed-repeat group**:
+3. Add web server user to feed-repeat group:
     ```bash
     sudo usermod -a -G feed-repeat www-data
     ```
     This allows the web server (running as www-data) to read the output feeds from `/var/lib/feed-repeat`. Change the user as appropriate.
 
-4. **Install the service file**:
+4. Install the service file:
     ```bash
     sudo cp configs/feed-repeat.service /etc/systemd/system/
     ```
 
-5. **Place your configuration**:
+5. Place your configuration:
     ```bash
     sudo cp config.yaml /etc/feed-repeat/config.yaml
     sudo chown feed-repeat:feed-repeat /etc/feed-repeat/config.yaml
     sudo chmod 640 /etc/feed-repeat/config.yaml
     ```
 
-6. **Build and install the binary**:
+6. Build and install the binary:
      ```bash
      cabal install --installdir=/tmp --install-method=copy --overwrite-policy=always
      sudo install -D -m 0755 /tmp/feed-repeat /usr/local/bin/feed-repeat
      ```
+    Or use the binaries available for download.
 
-7. **Install the timer unit**:
+7. Install the timer unit:
     ```bash
     sudo cp configs/feed-repeat.timer /etc/systemd/system/
     ```
 
-8. **Enable and start the service**:
+8. Enable and start the service:
    ```bash
    sudo systemctl daemon-reload
    sudo systemctl enable --now feed-repeat.timer
@@ -207,6 +192,9 @@ build-docker x86_64
 # Load into Docker daemon
 docker load < result
 
+# Alternatively, you can pull the pre-built image from GHCR
+docker pull ghcr.io/abhin4v/feed-repeat:latest
+
 # Run the container
 docker run --rm \
   -v /path/to/config.yaml:/etc/feed-repeat/config.yaml:ro \
@@ -215,28 +203,28 @@ docker run --rm \
   feed-repeat:latest
 ```
 
-The Docker image includes:
-- Static binary built for x86_64-linux or aarch64-linux
-- CA certificates for HTTPS feed fetching
-- Mount points for configuration, output, and cache directories
+The container runs as a non-root user (UID/GID `1000:1000`). If you bind-mount
+host directories instead of using named volumes, ensure they are writable by
+that UID, for example:
 
-Alternatively, you can pull the pre-built image from GHCR:
+```bash
+sudo chown -R 1000:1000 /path/to/output /path/to/cache
+```
 
-```
-docker pull ghcr.io/abhin4v/feed-repeat:latest
-```
+Named Docker volumes (as used in the examples above) are handled
+automatically by the Docker runtime.
 
 #### Scheduling Runs
 
 Since the container runs once and exits, you need to schedule it externally:
 
-1. **Host-level cron/systemd** (recommended): Use the host's cron or systemd timer to run the container periodically:
+- Use the host's cron or systemd timer to run the container periodically:
     ```bash
     # Via cron: add to crontab (runs daily at 2 AM)
     0 2 * * * docker run -v /path/to/config.yaml:/etc/feed-repeat/config.yaml:ro -v feed-repeat-output:/var/lib/feed-repeat -v feed-repeat-cache:/var/cache/feed-repeat feed-repeat:latest
     ```
 
-2. **Docker Compose with Ofelia**: Use Docker Compose with the Ofelia scheduler to run the container on a schedule:
+- Docker Compose with Ofelia: Use Docker Compose with the Ofelia scheduler to run the container on a schedule:
     ```yaml
     version: '3.8'
     
@@ -264,27 +252,14 @@ Since the container runs once and exits, you need to schedule it externally:
       feed-repeat-cache:
     ```
     
-    Run with: `docker-compose up -d`
+    Run with: `docker-compose up -d`.
 
-3. **Kubernetes**: If deployed on Kubernetes, use native `CronJob` resources for scheduling.
-
-4. **Docker Swarm**: Use native scheduled task features if using Docker Swarm.
+- Kubernetes: If deployed on Kubernetes, use native `CronJob` resources for scheduling.
+- Docker Swarm: Use native scheduled task features if using Docker Swarm.
 
 ### Serving Feeds with a Web Server
 
-To serve the output feeds publicly, you can use any web server. Example configurations are provided for:
-
-- **Nginx**: `configs/nginx.conf.example`
-- **Apache**: `configs/apache.conf.example`
-- **Caddy**: `configs/Caddyfile.example`
-
-All examples include:
-- Automatic HTTPS with Let's Encrypt
-- Security headers (HSTS, X-Content-Type-Options, etc.)
-- Proper Atom feed content-type handling
-- 6-hour caching for feed files
-
-Choose the configuration that matches your web server and customize the domain name and paths as needed.
+To serve the output feeds publicly, you can use any web server. Basic example configurations are provided for Nginx, Apache, and Caddy in the `configs` directory.
 
 ## CLI Usage
 
@@ -296,10 +271,11 @@ feed-repeat --config config.yaml --output-dir ./output --cache-dir ./cache
 
 - `--config FILE`: Path to YAML configuration file containing feed sources (required).
 - `--output-dir DIR`: Directory where output Atom files will be written (required).
-- `--cache-dir DIR`: Directory for cached Atom files (default: current directory).
+- `--cache-dir DIR`: Directory where cached Atom files will be stored (default: current directory).
 - `--validate`: Only validate the config file and exit.
-- `--verbose`: Enable all logging
-- `--quiet`: Enable only warning and error logging
+- `--verbose`: Enable all logging.
+- `--quiet`: Enable only warning and error logging.
+- `--version`: Show version information.
 
 ## Configuration
 
@@ -329,6 +305,6 @@ MIT
 
 ## Contributing
 
-I consider this is a done software. Maybe some day when [JSONFeed](https://www.jsonfeed.org/) gets popular, I'd consider adding support for it. Other than that, I don't forsee adding any new features. I'll keep doing bug fixes, security fixes and dependency upgrades.
+I consider this is a done software. Maybe some day when [JSONFeed](https://www.jsonfeed.org/) gets popular, I'd consider adding support for it. Other than that, I don't foresee adding any new features. I'll keep doing bugfixes, security fixes and dependency upgrades.
 
 Please feel free to create an issue if you find a bug. I'm not inclined to accept pull requests unless there is a very compelling reason.
