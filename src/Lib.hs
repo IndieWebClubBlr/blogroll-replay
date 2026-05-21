@@ -30,7 +30,6 @@ import Data.Aeson ((.!=), (.:), (.:?))
 import Data.Aeson qualified as Aeson
 import Data.Either.Combinators (mapLeft, maybeToRight)
 import Data.Function ((&))
-import Data.Functor (($>))
 import Data.HashMap.Strict qualified as HM
 import Data.Hashable (Hashable)
 import Data.List (sortBy)
@@ -70,7 +69,7 @@ instance Show URL where
   show = unURL
 
 newURL :: String -> Maybe URL
-newURL url = URI.parseURI url $> URL url
+newURL url = URL . show . HTTP.getUri <$> HTTP.parseRequest url
 
 instance Aeson.FromJSON URL where
   parseJSON = Aeson.withText "String" $ \str ->

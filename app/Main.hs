@@ -345,7 +345,7 @@ fetchFeed url modTime = do
                    ( HTTP.hIfModifiedSince,
                      BSC.pack
                        . Time.formatTime Time.defaultTimeLocale Time.rfc822DateFormat
-                       $ Time.utcToZonedTime (read "GMT") modTime
+                       $ Time.utcToZonedTime (Time.TimeZone 0 False "GMT") modTime
                    )
                  ]
         }
