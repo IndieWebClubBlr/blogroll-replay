@@ -143,6 +143,7 @@ data AppError
   | InvalidFormatError String FilePath
   | InvalidFeedUpdatedError
   | FeedNotModifiedError
+  | FeedTooManyRequestsError
   | HTTPError HTTP.HttpException
 
 instance Show AppError where
@@ -153,6 +154,7 @@ instance Show AppError where
     InvalidFormatError format filePath -> "File is not in " <> format <> " format: " <> filePath
     InvalidFeedUpdatedError -> "Feed updated date absent"
     FeedNotModifiedError -> "Feed not modified"
+    FeedTooManyRequestsError -> "Feed too many requests"
     HTTPError err -> "HTTP error: " <> displayException err
 
 feedToAtom :: (MonadIO m, MonadError AppError m) => UTCTime -> URL -> Feed.Feed -> m Atom.Feed

@@ -282,6 +282,7 @@ runTasksForSource tasks sourceFeedUrl = do
       (Just <$> fetchFeed url modTime) `catchError` \err -> do
         case err of
           FeedNotModifiedError -> logDebug $ "Feed not modified: " <> show url <> ", using cached"
+          FeedTooManyRequestsError -> logDebug $ "Feed too many requests: " <> show url <> ", using cached"
           _ -> logWarn $ "Unable to fetch fresh feed: " <> show url <> ", using cached: " <> show err
         return Nothing
 
@@ -409,15 +410,11 @@ fetchFeed url modTime = do
   return feed
   where
     fetchAndParse now man =
-      HTTP.parseRequest
-        >>> tryOrThrow HTTPError
-        >=> addHeaders
-        >>> fetchWithRetry man
-        >>> tryOrThrow HTTPError
-        >=> checkForStatusNotModified
-        >>> fromMaybeOrThrow FeedNotModifiedError
-        >=> Feed.parseFeedSource
-        >>> fromMaybeOrThrow (FeedParseError url.toString)
+      (HTTP.parseRequest >>> tryOrThrow HTTPError)
+        >=> (addHeaders >>> fetchWithRetry man >>> tryOrThrow HTTPError)
+        >=> (checkForStatus HTTP.status304 >>> fromMaybeOrThrow FeedNotModifiedError)
+        >=> (checkForStatus HTTP.status429 >>> fromMaybeOrThrow FeedTooManyRequestsError)
+        >=> (HTTP.responseBody >>> Feed.parseFeedSource >>> fromMaybeOrThrow (FeedParseError url.toString))
         >=> feedToAtom now url
 
     addHeaders request =
@@ -479,9 +476,9 @@ fetchFeed url modTime = do
 
               go size' (front . (x :))
 
-    checkForStatusNotModified resp
-      | HTTP.responseStatus resp == HTTP.status304 = Nothing
-      | otherwise = Just $ HTTP.responseBody resp
+    checkForStatus status resp
+      | HTTP.responseStatus resp == status = Nothing
+      | otherwise = Just resp
 
 parseAtomFile :: FilePath -> App Atom.Feed
 parseAtomFile filePath = do
