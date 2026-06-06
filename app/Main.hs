@@ -27,6 +27,7 @@ import Data.Either (isRight)
 import Data.Either.Extra (fromEither)
 import Data.Foldable (traverse_)
 import Data.List (nub, (\\))
+import Data.List.Extra (nubOrd)
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
@@ -42,7 +43,7 @@ import Network.HTTP.Client.TLS qualified as HTTP
 import Network.HTTP.Types qualified as HTTP
 import Options.Applicative qualified as Opt
 import PackageInfo_feed_repeat qualified as PI
-import System.Directory (createDirectoryIfMissing, renameFile)
+import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, removeFile, renameFile)
 import System.Exit (exitFailure)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose)
@@ -164,7 +165,8 @@ run env =
   Yaml.decodeFileEither env.options.configPath >>= \case
     Left err -> logErrorIO ("Error reading config: " <> show err) >> exitFailure
     Right tasks | null tasks -> logErrorIO "No tasks found in file" >> exitFailure
-    Right tasks ->
+    Right tasks -> do
+      migrateCacheFile env.options.cacheDir tasks
       validateTasks tasks >>= \case
         Nothing -> exitFailure
         Just validated
@@ -187,6 +189,34 @@ run env =
       | env.options.quiet = level >= LevelWarn
       | env.options.verbose = True
       | otherwise = level >= LevelInfo
+
+migrateCacheFile :: FilePath -> [FeedTask] -> IO ()
+migrateCacheFile cacheDir tasks = do
+  let sourceFeedUrls = nubOrd $ map sourceFeedUrl tasks
+  forM_ sourceFeedUrls $ \url -> do
+    let oldFileName = cacheDir </> oldCacheFileName url
+        tasksWithSource = [t | t <- tasks, t.sourceFeedUrl == url]
+    doesFileExist oldFileName >>= \case
+      False -> return ()
+      True -> do
+        results <- forM tasksWithSource $ \task -> do
+          let newFileName = cacheDir </> cacheFileName task.sourceFeedUrl task.outputFilename
+          newFileExists <- doesFileExist newFileName
+          if newFileExists
+            then return True
+            else do
+              try (copyFile oldFileName newFileName) >>= \case
+                Left (e :: IOException) -> do
+                  logWarnIO $ "Cache migration failed for " <> oldFileName <> ": " <> displayException e
+                  return False
+                Right _ -> do
+                  logInfoIO $ "Migrated cache file: " <> oldFileName <> " to " <> newFileName
+                  return True
+        when (and results) $
+          try (removeFile oldFileName) >>= \case
+            Right () -> return ()
+            Left (e :: IOException) -> do
+              logWarnIO $ "Failed to remove old cache file " <> oldFileName <> ": " <> displayException e
 
 validateTasks :: [FeedTask] -> IO (Maybe [FeedTask])
 validateTasks tasks = do
@@ -233,8 +263,8 @@ runTask task = do
   let minRunGapSeconds = fromIntegral task.minRunGapDays.toNum * Time.nominalDay - timerTolerance
   if Time.diffUTCTime now outputFeedUpdatedAncient < minRunGapSeconds
     then logInfo $ "Skipping run for URL: " <> show url
-    else do
-      fetchCacheFeed task.saveSourceFeedEntries task.sourceFeedUrl outputFeedUpdatedAncient
+    else
+      fetchCacheFeed task outputFeedUpdatedAncient
         >>= processSourceFeed task outputFeed outputFeedUpdatedNow now
 
 processSourceFeed :: FeedTask -> Maybe Atom.Feed -> UTCTime -> UTCTime -> Atom.Feed -> App ()
@@ -289,15 +319,21 @@ processSourceFeed task mOutputFeed outputFeedUpdated now sourceFeed = do
       entryId <- mkUuidUrn
       return entry {Atom.entryId = entryId, Atom.entryUpdated = timestamp}
 
-cacheFileName :: URL -> String
-cacheFileName url =
-  let d :: Digest SHA256 = Crypto.hash $ TE.encodeUtf8 $ T.pack url.toString
+oldCacheFileName :: URL -> String
+oldCacheFileName url =
+  let d :: Digest SHA256 = Crypto.hash $ TE.encodeUtf8 $ T.pack $ url.toString
    in show d <> ".atom"
 
-fetchCacheFeed :: Bool -> URL -> UTCTime -> App Atom.Feed
-fetchCacheFeed saveSourceFeedEntries url feedUpdated = do
+cacheFileName :: URL -> String -> String
+cacheFileName url outputFilename =
+  let d :: Digest SHA256 = Crypto.hash $ TE.encodeUtf8 $ T.pack $ url.toString <> ['\0'] <> outputFilename
+   in show d <> ".atom"
+
+fetchCacheFeed :: FeedTask -> UTCTime -> App Atom.Feed
+fetchCacheFeed task feedUpdated = do
   env <- ask
-  let cacheFilePath = env.options.cacheDir </> cacheFileName url
+  let url = task.sourceFeedUrl
+  let cacheFilePath = env.options.cacheDir </> cacheFileName url task.outputFilename
   freshOrCachedFeed <-
     (Right <$> fetchFeed url feedUpdated) `catchError` \err -> do
       case err of
@@ -307,7 +343,7 @@ fetchCacheFeed saveSourceFeedEntries url feedUpdated = do
             "Unable to fetch fresh feed: " <> show url <> ", using cached: " <> show err
       Left <$> parseAtomFile cacheFilePath
   mergedFeed <-
-    if saveSourceFeedEntries
+    if task.saveSourceFeedEntries
       then case freshOrCachedFeed of
         Right freshFeed ->
           (mergeFeeds freshFeed <$> parseAtomFile cacheFilePath) `catchError` \_ -> return freshFeed
@@ -423,8 +459,9 @@ parseAtomFile filePath = do
         >=> Feed.parseFeedString
         >>> fromMaybeOrThrow (FeedParseError filePath)
 
-logInfoIO, logErrorIO :: String -> IO ()
+logInfoIO, logWarnIO, logErrorIO :: String -> IO ()
 logInfoIO = runStdoutLoggingT . logInfo
+logWarnIO = runStdoutLoggingT . logWarn
 logErrorIO = runStdoutLoggingT . logError
 
 logDebug, logInfo, logWarn, logError :: (MonadLogger m) => String -> m ()

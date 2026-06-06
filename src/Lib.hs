@@ -67,7 +67,7 @@ import Text.Feed.Types qualified as Feed
 import Prelude hiding (writeFile)
 
 newtype URL = URL {unURL :: String}
-  deriving stock (Eq, Generic)
+  deriving stock (Eq, Ord, Generic)
   deriving anyclass (Hashable)
 
 instance HasField "toString" URL String where
