@@ -123,6 +123,7 @@ The project includes a NixOS module (`nix/module.nix`) for easy integration into
 ```
 
 The module automatically:
+
 - Creates a systemd service with configurable timer.
 - Sets up user/group with appropriate permissions.
 - Generates the configuration file from your NixOS settings.
@@ -133,11 +134,13 @@ The module automatically:
 For non-NixOS systems, a systemd service file (`configs/feed-repeat.service`) is provided. To set it up:
 
 1. Create user and group:
+
     ```bash
     sudo useradd -r -s /bin/false feed-repeat
     ```
 
 2. Create required directories:
+
     ```bash
     sudo mkdir -p /var/lib/feed-repeat /var/cache/feed-repeat /etc/feed-repeat
     sudo chown feed-repeat:feed-repeat /var/lib/feed-repeat /var/cache/feed-repeat
@@ -145,17 +148,20 @@ For non-NixOS systems, a systemd service file (`configs/feed-repeat.service`) is
     ```
 
 3. Add web server user to feed-repeat group:
+
     ```bash
     sudo usermod -a -G feed-repeat www-data
     ```
     This allows the web server (running as www-data) to read the output feeds from `/var/lib/feed-repeat`. Change the user as appropriate.
 
 4. Install the service file:
+
     ```bash
     sudo cp configs/feed-repeat.service /etc/systemd/system/
     ```
 
 5. Place your configuration:
+
     ```bash
     sudo cp config.yaml /etc/feed-repeat/config.yaml
     sudo chown feed-repeat:feed-repeat /etc/feed-repeat/config.yaml
@@ -163,19 +169,22 @@ For non-NixOS systems, a systemd service file (`configs/feed-repeat.service`) is
     ```
 
 6. Build and install the binary:
-     ```bash
-     cabal install --installdir=/tmp --install-method=copy --overwrite-policy=always
-     sudo install -D -m 0755 /tmp/feed-repeat /usr/local/bin/feed-repeat
-     ```
+
+    ```bash
+    cabal install --installdir=/tmp --install-method=copy --overwrite-policy=always
+    sudo install -D -m 0755 /tmp/feed-repeat /usr/local/bin/feed-repeat
+    ```
     Or use the binaries available for download.
 
 7. Install the timer unit:
+
     ```bash
     sudo cp configs/feed-repeat.timer /etc/systemd/system/
     ```
 
 8. Enable and start the service:
-   ```bash
+
+    ```bash
    sudo systemctl daemon-reload
    sudo systemctl enable --now feed-repeat.timer
    ```
@@ -219,12 +228,14 @@ automatically by the Docker runtime.
 Since the container runs once and exits, you need to schedule it externally:
 
 - Use the host's cron or systemd timer to run the container periodically:
+
     ```bash
     # Via cron: add to crontab (runs daily at 2 AM)
     0 2 * * * docker run -v /path/to/config.yaml:/etc/feed-repeat/config.yaml:ro -v feed-repeat-output:/var/lib/feed-repeat -v feed-repeat-cache:/var/cache/feed-repeat feed-repeat:latest
     ```
 
 - Docker Compose with Ofelia: Use Docker Compose with the Ofelia scheduler to run the container on a schedule:
+
     ```yaml
     services:
       feed-repeat:
@@ -304,7 +315,7 @@ MIT
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md).
+See [CHANGELOG](CHANGELOG.md).
 
 ## Contributing
 
