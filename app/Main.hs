@@ -9,6 +9,7 @@ import Data.Foldable (traverse_)
 import Data.List (isPrefixOf, nub, (\\))
 import Data.List.Extra (nubOrd)
 import Data.Maybe (catMaybes)
+import Data.Text qualified as T
 import Data.Time qualified as Time
 import Data.Version (showVersion)
 import Data.Yaml qualified as Yaml
@@ -95,8 +96,8 @@ optionsParser =
     <*> Opt.strOption
       ( Opt.long "user-agent"
           <> Opt.metavar "STRING"
-          <> Opt.value "feed-repeat"
-          <> Opt.help "User-Agent header to send in HTTP requests, default: 'feed-repeat'"
+          <> Opt.value ("feed-repeat/" <> T.pack (showVersion PI.version))
+          <> Opt.help "User-Agent header to send in HTTP requests, default: 'feed-repeat/<version>'"
       )
     <*> Opt.switch
       (Opt.long "validate" <> Opt.help "Only validate the config file and exit")
