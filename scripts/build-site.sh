@@ -12,17 +12,21 @@ pandoc --standalone --embed-resources --css docs/light.css --metadata title="fee
 # Generate CHANGELOG.html from CHANGELOG
 pandoc --standalone --embed-resources --css docs/light.css --metadata title="Changelog — feed-repeat" CHANGELOG.md -o docs/CHANGELOG.html
 
+# Generate docs/nix-module-options.md from the Nix module, then render to HTML
+gen-nix-module-docs
+pandoc --standalone --embed-resources --css docs/light.css --metadata title="NixOS Module Options — feed-repeat" docs/nix-module-options.md -o docs/nix-module-options.html
+
 # Fix CHANGELOG.md link in index.html to point to CHANGELOG.html
 sed -i 's#href="CHANGELOG\.md"#href="CHANGELOG.html"#g' docs/index.html
 
 # Remove the title-block-header (pandoc duplicates the title from --metadata)
-for f in docs/index.html docs/CHANGELOG.html; do
+for f in docs/index.html docs/CHANGELOG.html docs/nix-module-options.html; do
   sed -i '/^<header id="title-block-header">$/,/^<\/header>$/d' "$f"
 done
 
-# Add navigation bar to both pages (after <body>)
-for f in docs/index.html docs/CHANGELOG.html; do
-  sed -i "s#<body>#<body>\n<nav><a href=\"index.html\">Home</a> | <a href=\"CHANGELOG.html\">Changelog</a> | <a href=\"https://github.com/abhin4v/feed-repeat\">Source</a></nav>\n#" "$f"
+# Add navigation bar to all pages (after <body>)
+for f in docs/index.html docs/CHANGELOG.html docs/nix-module-options.html; do
+  sed -i "s#<body>#<body>\n<nav><a href=\"index.html\">Home</a> | <a href=\"nix-module-options.html\">NixOS Module Options</a> | <a href=\"CHANGELOG.html\">Changelog</a> | <a href=\"https://github.com/abhin4v/feed-repeat\">Source</a></nav>\n#" "$f"
 done
 
 echo "Site built in docs/"

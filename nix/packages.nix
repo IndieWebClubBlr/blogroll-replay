@@ -165,7 +165,7 @@ let
 
   tools = builtins.map util.getDrv conf.env.tools;
 
-  scripts = import ./scripts.nix { inherit pkgs; };
+  scripts = import ./scripts.nix { inherit pkgs; lib = pkgs.lib; };
 in
 {
   bin = (if static then util.compressExes else (x: x)) ourHaskell.feed-repeat;
