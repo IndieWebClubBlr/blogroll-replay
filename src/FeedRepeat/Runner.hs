@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveAnyClass #-}
+
 module FeedRepeat.Runner
   ( Options (..),
     Env (..),
@@ -16,7 +18,7 @@ where
 
 import Control.Arrow ((>>>))
 import Control.Exception (throwIO, toException)
-import Control.Monad (forM, unless, void, when, (>=>))
+import Control.Monad (forM, forM_, unless, void, when, (>=>))
 import Control.Monad.Except (ExceptT, catchError, throwError)
 import Control.Monad.Logger
   ( LoggingT,
@@ -29,8 +31,9 @@ import Control.Monad.Logger
   )
 import Control.Monad.Reader (ReaderT, ask)
 import Control.Retry qualified as Retry
-import Crypto.Hash (Digest, SHA256)
+import Crypto.Hash (SHA256)
 import Crypto.Hash qualified as Crypto
+import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BSC
 import Data.ByteString.Lazy qualified as LBS
@@ -41,15 +44,19 @@ import Data.List (zip4)
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
-import Data.Text.Lazy qualified as TL
+import Data.Text.Lazy qualified as LT
+import Data.Text.Lazy.Encoding qualified as TEL
 import Data.Time (NominalDiffTime, UTCTime (..))
 import Data.Time qualified as Time
 import Data.Time.Format.ISO8601 (iso8601Show)
+import Data.Tuple.Extra (firstM)
 import FeedRepeat.Lib
+import GHC.Generics (Generic)
 import Network.HTTP.Client qualified as HTTP
 import Network.HTTP.Types qualified as HTTP
+import Network.HTTP.Types.Header qualified as HTTP
 import System.Directory (renameFile)
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath (takeDirectory, (<.>), (</>))
 import System.IO (hClose)
 import System.IO.Error (illegalOperationErrorType, mkIOError)
 import System.IO.Temp (withTempFile)
@@ -81,6 +88,9 @@ data Env = Env {options :: Options, httpManager :: HTTP.Manager, startTime :: UT
 
 type App a = ExceptT AppError (ReaderT Env (LoggingT IO)) a
 
+data FeedMetadata = FeedMetadata {etag :: Maybe T.Text, lastModified :: Maybe T.Text}
+  deriving (Show, Eq, Generic, Aeson.ToJSON, Aeson.FromJSON)
+
 requestTimeoutMicros :: Int
 requestTimeoutMicros = 30_000_000 -- 30 sec
 
@@ -99,6 +109,7 @@ ancientTime = UTCTime (Time.fromGregorian 2000 1 1) 0
 runTasksForSource :: [FeedTask] -> URL -> App ()
 runTasksForSource tasks sourceFeedUrl = do
   env <- ask
+
   -- parse output files
   (tasks, mOutputFeeds) <- unzip . catMaybes <$> traverse mParseOutputFile tasks
 
@@ -122,11 +133,29 @@ runTasksForSource tasks sourceFeedUrl = do
 
   -- run tasks
   unless (null actions) $ do
-    mSourceFeed <- mFetchFeed sourceFeedUrl $ maximum outputFeedsUpdatedAncient
-    traverse_ ($ mSourceFeed) actions
+    let metadataFilePath = env.options.cacheDir </> sha256Hash sourceFeedUrl.toString <.> "json"
+    metadata <- parseFeedMetadata' metadataFilePath
+    mSourceFeedAndMetadata <- mFetchFeed sourceFeedUrl metadata
+    forM_ (snd <$> mSourceFeedAndMetadata) $ saveFeedMetadata' metadataFilePath
+    traverse_ ($ fst <$> mSourceFeedAndMetadata) actions
   where
-    mFetchFeed url modTime =
-      (Just <$> fetchFeed url modTime) `catchError` \err -> do
+    parseFeedMetadata' metadataFilePath =
+      parseFeedMetadata metadataFilePath
+        `catchError` \err -> do
+          case err of
+            IOError err -> logDebug $ "Failed to read feed metadata: " <> show err
+            err -> logWarn $ "Failed to read feed metadata: " <> show err
+          return $ FeedMetadata Nothing Nothing
+
+    saveFeedMetadata' metadataFilePath metadata =
+      ( saveFeedMetadata metadataFilePath metadata
+          >> logDebug ("Saved feed metadata: " <> metadataFilePath)
+      )
+        `catchError` \err ->
+          logWarn $ "Failed to save feed metadata: " <> metadataFilePath <> show err
+
+    mFetchFeed url metadata =
+      (Just <$> fetchFeed url metadata) `catchError` \err -> do
         case err of
           FeedNotModifiedError -> logDebug $ "Feed not modified: " <> show url <> ", using cached"
           FeedTooManyRequestsError -> logDebug $ "Feed too many requests: " <> show url <> ", using cached"
@@ -141,11 +170,11 @@ runTasksForSource tasks sourceFeedUrl = do
         `catchError` \case
           IOError err -> do
             -- file missing or unreadable, task still runs
-            logWarn $ "Failed to read output feed: " <> show err
+            logDebug $ "Failed to read output feed: " <> show err
             return $ Just (task, Nothing)
           err -> do
             -- file corrupted, tasks does not run
-            logError $ "Corrupted output feed: " <> show err
+            logWarn $ "Corrupted output feed: " <> show err
             return Nothing
 
     runTask task sourceFeed outputFeed outputFeedUpdated = do
@@ -212,15 +241,15 @@ processSourceFeed task mOutputFeed outputFeedUpdated sourceFeed = do
       entryId <- mkUuidUrn
       return entry {Atom.entryId = entryId, Atom.entryUpdated = timestamp}
 
+sha256Hash :: String -> String
+sha256Hash = BSC.pack >>> Crypto.hash @_ @SHA256 >>> show
+
 oldCacheFileName :: URL -> String
-oldCacheFileName url =
-  let d :: Digest SHA256 = Crypto.hash $ TE.encodeUtf8 $ T.pack $ url.toString
-   in show d <> ".atom"
+oldCacheFileName url = sha256Hash url.toString <> ".atom"
 
 cacheFileName :: URL -> String -> String
 cacheFileName url outputFilename =
-  let d :: Digest SHA256 = Crypto.hash $ TE.encodeUtf8 $ T.pack $ url.toString <> ['\0'] <> outputFilename
-   in show d <> ".atom"
+  sha256Hash (url.toString <> ['\0'] <> outputFilename) <> ".atom"
 
 cacheSourceFeed :: FeedTask -> Maybe Atom.Feed -> App Atom.Feed
 cacheSourceFeed task mFeed = do
@@ -249,33 +278,31 @@ cacheSourceFeed task mFeed = do
 
   return mergedFeed
 
-fetchFeed :: URL -> UTCTime -> App Atom.Feed
-fetchFeed url modTime = do
+fetchFeed :: URL -> FeedMetadata -> App (Atom.Feed, FeedMetadata)
+fetchFeed url metadata = do
   env <- ask
-  feed <- fetchAndParse env.startTime env.httpManager url.toString
+  (feed, metadata) <- fetchAndParse env.startTime env.httpManager url.toString
   logDebug $ "Fetched feed with " <> show (length $ Atom.feedEntries feed) <> " entries: " <> url.toString
-  return feed
+  return (feed, metadata)
   where
     fetchAndParse now man =
       (HTTP.parseRequest >>> tryOrThrow HTTPError)
         >=> (addHeaders >>> fetchWithRetry man >>> tryOrThrow HTTPError)
         >=> (checkForStatus HTTP.status304 >>> fromMaybeOrThrow FeedNotModifiedError)
         >=> (checkForStatus HTTP.status429 >>> fromMaybeOrThrow FeedTooManyRequestsError)
-        >=> (HTTP.responseBody >>> Feed.parseFeedSource >>> fromMaybeOrThrow (FeedParseError url.toString))
-        >=> feedToAtom now url
+        >=> ( responseBodyAndMetadata
+                >>> firstM (Feed.parseFeedSource >>> fromMaybeOrThrow (FeedParseError url.toString))
+            )
+        >=> firstM (feedToAtom now url)
 
     addHeaders request =
       request
         { HTTP.responseTimeout = HTTP.responseTimeoutMicro requestTimeoutMicros,
           HTTP.requestHeaders =
             HTTP.requestHeaders request
-              <> [ (HTTP.hUserAgent, "feed-repeat"),
-                   ( HTTP.hIfModifiedSince,
-                     BSC.pack
-                       . Time.formatTime Time.defaultTimeLocale Time.rfc822DateFormat
-                       $ Time.utcToZonedTime (Time.TimeZone 0 False "GMT") modTime
-                   )
-                 ]
+              <> [(HTTP.hUserAgent, "feed-repeat")]
+              <> [(HTTP.hIfModifiedSince, TE.encodeUtf8 lastMod) | Just lastMod <- [metadata.lastModified]]
+              <> [(HTTP.hIfNoneMatch, TE.encodeUtf8 etag) | Just etag <- [metadata.etag]]
         }
 
     fetchWithRetry man req =
@@ -327,6 +354,14 @@ fetchFeed url modTime = do
       | HTTP.responseStatus resp == status = Nothing
       | otherwise = Just resp
 
+    responseBodyAndMetadata resp =
+      ( HTTP.responseBody resp,
+        FeedMetadata
+          { etag = TE.decodeASCII' =<< lookup HTTP.hETag (HTTP.responseHeaders resp),
+            lastModified = TE.decodeASCII' =<< lookup HTTP.hLastModified (HTTP.responseHeaders resp)
+          }
+      )
+
 parseAtomFile :: FilePath -> App Atom.Feed
 parseAtomFile filePath = do
   feed <- readAndParse filePath
@@ -344,6 +379,15 @@ parseAtomFile filePath = do
         >=> Feed.parseFeedString
         >>> fromMaybeOrThrow (FeedParseError filePath)
 
+parseFeedMetadata :: FilePath -> App FeedMetadata
+parseFeedMetadata filePath = do
+  tryOrThrow IOError (Aeson.eitherDecodeFileStrict' filePath) >>= \case
+    Left err -> throwError $ FeedMetadataParseError filePath err
+    Right metadata -> return metadata
+
+saveFeedMetadata :: FilePath -> FeedMetadata -> App ()
+saveFeedMetadata filePath = Aeson.encode >>> writeFileBS filePath
+
 logInfoIO, logWarnIO, logErrorIO :: String -> IO ()
 logInfoIO = runStdoutLoggingT . logInfo
 logWarnIO = runStdoutLoggingT . logWarn
@@ -355,11 +399,14 @@ logInfo = logInfoN . T.pack
 logWarn = logWarnN . T.pack
 logError = logErrorN . T.pack
 
-writeFile :: FilePath -> TL.Text -> App ()
-writeFile fp content = do
+writeFile :: FilePath -> LT.Text -> App ()
+writeFile fp = TEL.encodeUtf8 >>> writeFileBS fp
+
+writeFileBS :: FilePath -> LBS.ByteString -> App ()
+writeFileBS fp content = do
   let dir = takeDirectory fp
   tryOrThrow IOError $ withTempFile dir "feed-repeat-" $ \tmpFP tmpH -> do
-    BS.hPutStr tmpH . TE.encodeUtf8 $ TL.toStrict content
+    LBS.hPutStr tmpH content
     hClose tmpH
     renameFile tmpFP fp
     setFileMode fp fileMode

@@ -142,6 +142,7 @@ data AppError
   | InvalidFeedUpdatedError
   | FeedNotModifiedError
   | FeedTooManyRequestsError
+  | FeedMetadataParseError FilePath String
   | HTTPError HTTP.HttpException
 
 instance Show AppError where
@@ -153,6 +154,7 @@ instance Show AppError where
     InvalidFeedUpdatedError -> "Feed updated date absent"
     FeedNotModifiedError -> "Feed not modified"
     FeedTooManyRequestsError -> "Feed too many requests"
+    FeedMetadataParseError filePath err -> "Failed to parse: " <> filePath <> ": " <> err
     HTTPError err -> "HTTP error: " <> displayException err
 
 feedToAtom :: (MonadIO m, MonadError AppError m) => UTCTime -> URL -> Feed.Feed -> m Atom.Feed
