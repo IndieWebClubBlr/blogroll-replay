@@ -68,6 +68,8 @@ names.</li>
 <li>HTTP retry for server errors — retry logic was previously broken
 because 5xx exceptions bypassed the retry loop. Server errors are now
 properly retried with exponential backoff.</li>
+<li>Statically-linked build for AArch64 — the Nix GC root was not being
+created.</li>
 </ul>
 <h3 id="removed">Removed</h3>
 <ul>

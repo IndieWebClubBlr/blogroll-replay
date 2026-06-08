@@ -16,7 +16,7 @@ let
     nix-build nix/release.nix --arg static true --argstr system "$1-linux"
     # add Nix GC root for static dependencies and build tools
     nix-store --add-root .gcroots/static-deps-$1 \
-      --realise `nix-instantiate --quiet --quiet --quiet nix/static-deps.nix` \
+      --realise `nix-instantiate --argstr system "$1-linux" --quiet --quiet --quiet nix/static-deps.nix` \
       > /dev/null
   '';
   run = pkgs.writeShellScriptBin "run" ''

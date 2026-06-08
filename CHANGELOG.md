@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 - HTTP retry for server errors — retry logic was previously broken because 5xx exceptions bypassed the retry loop. Server errors are now properly retried with exponential backoff.
+- Statically-linked build for AArch64 — the Nix GC root was not being created.
 
 ### Removed
 - Legacy cache file migration code.

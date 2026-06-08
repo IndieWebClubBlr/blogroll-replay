@@ -57,4 +57,12 @@ in
       );
     };
   })
+
+  # disable tests for sqlite on aarch64 (flaky timing tests in sandboxed builds)
+  (final: prev: {
+    sqlite = if final.stdenv.hostPlatform.isAarch64 then
+      prev.sqlite.overrideAttrs (old: { doCheck = false; })
+    else
+      prev.sqlite;
+  })
 ]

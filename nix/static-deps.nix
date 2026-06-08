@@ -1,11 +1,12 @@
 {
   compiler ? null,
+  system ? builtins.currentSystem,
 }:
 let
   pkgs = import ./. {
     inherit compiler;
     static = true;
-    system = "x86_64-linux";
+    inherit system;
   };
 in
 pkgs.feed-repeat.staticDeps
