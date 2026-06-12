@@ -19,10 +19,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 - Cache files are now per-task instead of per-source, enabling different `saveSourceFeedEntries` per task for the same source URL. Old cache files are migrated automatically to the new file names.
+- Credentials embedded in source feed URLs (e.g., `https://token@host/feed`) are now redacted from all log output.
 
 ### Fixed
 - HTTP retry for server errors — retry logic was previously broken because 5xx exceptions bypassed the retry loop. Server errors are now properly retried with exponential backoff.
 - Statically-linked build for AArch64 — the Nix GC root was not being created.
+- URL credentials in source feed URLs were not being sent with HTTP requests, breaking authentication for feeds that require them. The original URL is now preserved as-is for the request.
 
 ### Removed
 - Legacy cache file migration code.

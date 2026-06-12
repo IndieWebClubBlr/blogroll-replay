@@ -1,9 +1,8 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies #-}
 
 module FeedRepeat.Lib
-  ( URL,
+  ( URL (..),
     newURL,
     checkPublicUrl,
     NonNegative,
@@ -35,8 +34,7 @@ import Data.Either.Combinators (mapLeft, maybeToRight)
 import Data.Function ((&))
 import Data.HashMap.Strict qualified as HM
 import Data.HashSet qualified as HS
-import Data.HashSet qualified as Set
-import Data.Hashable (Hashable)
+import Data.Hashable (Hashable (..))
 import Data.List (sortBy)
 import Data.List.Extra (nubOrdOn)
 import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, maybeToList)
@@ -64,18 +62,25 @@ import Text.Feed.Query qualified as Feed
 import Text.Feed.Types qualified as Feed
 import Prelude hiding (writeFile)
 
-newtype URL = URL {unURL :: String}
-  deriving stock (Eq, Ord, Generic)
-  deriving anyclass (Hashable)
+data URL = URL {toString :: String, redacted :: String} deriving stock (Generic)
 
-instance HasField "toString" URL String where
-  getField = unURL
+instance Eq URL where
+  x == y = x.toString == y.toString
+
+instance Ord URL where
+  compare x y = compare x.toString y.toString
+
+instance Hashable URL where
+  hashWithSalt salt x = hashWithSalt salt x.toString
+  hash x = hash x.toString
 
 instance Show URL where
-  show = unURL
+  show = redacted
 
 newURL :: String -> Maybe URL
-newURL url = URL . show . HTTP.getUri <$> HTTP.parseRequest url
+newURL url = do
+  parsed <- HTTP.parseRequest url
+  pure $ URL url (show $ HTTP.getUri parsed)
 
 instance Aeson.FromJSON URL where
   parseJSON = Aeson.withText "String" $ \str ->
@@ -240,7 +245,7 @@ normalizeLink :: URL -> Atom.Link -> Atom.Link
 normalizeLink feedUrl link@Atom.Link {linkHref} =
   link {Atom.linkHref = normalizeLinkURL feedUrl linkHref}
   where
-    normalizeLinkURL (URL feedUrl) link
+    normalizeLinkURL (URL feedUrl _) link
       | T.null link = link
       | ("http://" `T.isPrefixOf` link || "https://" `T.isPrefixOf` link)
           && not (isLocalhost link) =
@@ -320,8 +325,8 @@ computeNewEntries passthroughNewEntries mSourceFeed eCachedFeed
   | passthroughNewEntries,
     Just sourceFeed <- mSourceFeed,
     Right cachedFeed <- eCachedFeed =
-      let cachedFeedLinks = Set.fromList $ map getItemLinkOrId $ Atom.feedEntries cachedFeed
-       in filter (not . (`Set.member` cachedFeedLinks) . getItemLinkOrId) $ Atom.feedEntries sourceFeed
+      let cachedFeedLinks = HS.fromList $ map getItemLinkOrId $ Atom.feedEntries cachedFeed
+       in filter (not . (`HS.member` cachedFeedLinks) . getItemLinkOrId) $ Atom.feedEntries sourceFeed
   | otherwise = []
 
 mkUuidUrn :: (MonadIO m) => m T.Text

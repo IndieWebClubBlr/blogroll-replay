@@ -789,6 +789,47 @@ main = hspec $ do
           result = computeNewEntries True (Just source) (Right cached)
       map Atom.entryId result `shouldBe` ["e2"]
 
+  describe "URL redaction" $ do
+    it "redacts userinfo when URL has user:password" $ do
+      let url = newURL' "http://user:pass@example.com/path"
+      url.redacted `shouldBe` "http://example.com/path"
+
+    it "redacts userinfo when URL has only username" $ do
+      let url = newURL' "http://token@example.com/path"
+      url.redacted `shouldBe` "http://example.com/path"
+
+    it "redacts userinfo when URL has empty password (trailing colon)" $ do
+      let url = newURL' "http://user:@example.com/path"
+      url.redacted `shouldBe` "http://example.com/path"
+
+    it "does not redact URL without userinfo" $ do
+      let url = newURL' "http://example.com/path"
+      url.redacted `shouldBe` "http://example.com/path"
+
+    it "does not redact URL with only host and port" $ do
+      let url = newURL' "http://example.com:8080/path"
+      url.redacted `shouldBe` "http://example.com:8080/path"
+
+    it "does not redact https URL without userinfo" $ do
+      let url = newURL' "https://example.com/path?q=1"
+      url.redacted `shouldBe` "https://example.com/path?q=1"
+
+    it "redacts userinfo in https URL" $ do
+      let url = newURL' "https://user:secret@example.com/feed"
+      url.redacted `shouldBe` "https://example.com/feed"
+
+    it "preserves unredacted URL via toString" $ do
+      let url = newURL' "http://user:pass@example.com/path"
+      url.toString `shouldBe` "http://user:pass@example.com/path"
+
+    it "redacts URL via Show" $ do
+      let url = newURL' "http://user:pass@example.com/path"
+      show url `shouldBe` "http://example.com/path"
+
+    it "handles query with userinfo" $ do
+      let url = newURL' "http://user:pass@example.com/path?q=1"
+      url.redacted `shouldBe` "http://example.com/path?q=1"
+
   describe "SSRF protection" ssrfSpec
 
   describe "selectEntries distribution" $ do

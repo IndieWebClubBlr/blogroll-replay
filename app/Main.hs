@@ -175,7 +175,7 @@ validateTasks outputDir tasks = do
             logErrorIO $ "Output file is outside output directory: " <> outputFP
             return Nothing
       False -> do
-        logErrorIO $ "Private source feed URL found: " <> task.sourceFeedUrl.toString
+        logErrorIO $ "Private source feed URL found: " <> task.sourceFeedUrl.redacted
         return Nothing
 
   -- Check for duplicate output filenames

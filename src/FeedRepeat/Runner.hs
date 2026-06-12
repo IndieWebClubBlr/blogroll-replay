@@ -125,7 +125,7 @@ runTasksForSource tasks sourceFeedUrl = do
       let minRunGapSeconds = fromIntegral task.minRunGapDays.toNum * Time.nominalDay - timerTolerance
       if Time.diffUTCTime env.startTime outputFeedUpdated < minRunGapSeconds
         then do
-          logInfo $ "Skipping run for URL: " <> show sourceFeedUrl
+          logInfo $ "Skipping run for URL: " <> sourceFeedUrl.redacted
           return Nothing
         else return $ Just $ \mSourceFeed ->
           runTask task mSourceFeed mOutputFeed `catchError` (logError . show)
@@ -155,9 +155,9 @@ runTasksForSource tasks sourceFeedUrl = do
     mFetchFeed url metadata =
       (Just <$> fetchFeed url metadata) `catchError` \err -> do
         case err of
-          FeedNotModifiedError -> logDebug $ "Feed not modified: " <> show url <> ", using cached"
-          FeedTooManyRequestsError -> logDebug $ "Feed too many requests: " <> show url <> ", using cached"
-          _ -> logWarn $ "Unable to fetch fresh feed: " <> show url <> ", using cached: " <> show err
+          FeedNotModifiedError -> logDebug $ "Feed not modified: " <> url.redacted <> ", using cached"
+          FeedTooManyRequestsError -> logDebug $ "Feed too many requests: " <> url.redacted <> ", using cached"
+          _ -> logWarn $ "Unable to fetch fresh feed: " <> url.redacted <> ", using cached: " <> show err
         return Nothing
 
     mParseOutputFile task = do
@@ -177,7 +177,7 @@ runTasksForSource tasks sourceFeedUrl = do
 
     runTask task sourceFeed outputFeed = do
       let url = task.sourceFeedUrl
-      logDebug $ "Processing: " <> show url
+      logDebug $ "Processing: " <> url.redacted
       logDebug $
         ("Task params: saveSourceFeedEntries=" <> show task.saveSourceFeedEntries)
           <> (", repeatedEntryCount=" <> show task.repeatedEntryCount)
@@ -229,11 +229,11 @@ processSourceFeed task mOutputFeed (sourceFeed, newEntries') = do
       -- write new output feed
       let url = task.sourceFeedUrl
       content <-
-        fromMaybeOrThrow (FeedRenderError url.toString) . Feed.textFeed $ Feed.AtomFeed resultFeed
+        fromMaybeOrThrow (FeedRenderError url.redacted) . Feed.textFeed $ Feed.AtomFeed resultFeed
       let outputPath = env.options.outputDir </> task.outputFilename <> ".atom"
       writeFile outputPath content
       logDebug $ "Wrote to: " <> outputPath
-      logInfo $ "Processed " <> show url <> " successfully"
+      logInfo $ "Processed " <> url.redacted <> " successfully"
   where
     resetEntryId timestamp entry = do
       entryId <- mkUuidUrn
@@ -274,7 +274,7 @@ cacheSourceFeed task mSourceFeed = do
 
   when (isJust mSourceFeed) $
     case Feed.textFeed (Feed.AtomFeed mergedFeed) of
-      Nothing -> logWarn $ "Failed to export feed for URL: " <> show url
+      Nothing -> logWarn $ "Failed to export feed for URL: " <> url.redacted
       Just txt ->
         (writeFile cacheFilePath txt >> logDebug ("Cached to: " <> cacheFilePath))
           `catchError` (logWarn . ("Failed to write cache file: " <>) . show)
@@ -285,7 +285,7 @@ fetchFeed :: URL -> FeedMetadata -> App (Atom.Feed, FeedMetadata)
 fetchFeed url metadata = do
   env <- ask
   (feed, metadata) <- fetchAndParse env.startTime env.httpManager env.options.userAgent url.toString
-  logDebug $ "Fetched feed with " <> show (length $ Atom.feedEntries feed) <> " entries: " <> url.toString
+  logDebug $ "Fetched feed with " <> show (length $ Atom.feedEntries feed) <> " entries: " <> url.redacted
   return (feed, metadata)
   where
     fetchAndParse now man userAgent =
@@ -294,7 +294,7 @@ fetchFeed url metadata = do
         >=> (checkForStatus HTTP.status304 >>> fromMaybeOrThrow FeedNotModifiedError)
         >=> (checkForStatus HTTP.status429 >>> fromMaybeOrThrow FeedTooManyRequestsError)
         >=> ( responseBodyAndMetadata
-                >>> firstM (Feed.parseFeedSource >>> fromMaybeOrThrow (FeedParseError url.toString))
+                >>> firstM (Feed.parseFeedSource >>> fromMaybeOrThrow (FeedParseError url.redacted))
             )
         >=> firstM (feedToAtom now url)
 
