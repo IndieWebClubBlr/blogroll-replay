@@ -1,9 +1,10 @@
 {
   system ? builtins.currentSystem,
   compiler ? null,
+  devTools ? true,
 }:
 let
-  pkgs = import ./nix { inherit system compiler; };
+  pkgs = import ./nix { inherit system compiler devTools; };
 in
 pkgs.mkShell {
   buildInputs = [ pkgs.feed-repeat.shell ];

@@ -2,6 +2,7 @@
   pkgs,
   compiler,
   static,
+  devTools,
 }:
 let
   lib =
@@ -128,8 +129,6 @@ let
       manual = hfinal: hprev: {
         cabal-install = patch hprev.cabal-install [ ./patches/prevent_missing_index_error.patch ];
 
-        haskell-language-server = hlsDisablePlugins hprev.haskell-language-server conf.hls.disable_plugins;
-
         feed-repeat =
           let
             cleanSource = util.filterSrc {
@@ -139,6 +138,8 @@ let
             };
           in
           confPkg (hprev.callCabal2nix "feed-repeat" cleanSource { });
+      } // lib.optionalAttrs devTools {
+        haskell-language-server = hlsDisablePlugins hprev.haskell-language-server conf.hls.disable_plugins;
       };
     in
     pkgs.haskell.packages.${ghcVer}.extend (
@@ -159,11 +160,11 @@ let
   );
 
   # Compile haskell tools with ourHaskell to ensure compatibility
-  haskellTools = builtins.map (
+  haskellTools = lib.optionals devTools (builtins.map (
     p: ourHaskell.${lib.removePrefix "haskellPackages." p}
-  ) conf.env.haskell_tools;
+  ) conf.env.haskell_tools);
 
-  tools = builtins.map util.getDrv conf.env.tools;
+  tools = lib.optionals devTools (builtins.map util.getDrv conf.env.tools);
 
   scripts = import ./scripts.nix { inherit pkgs; lib = pkgs.lib; };
 in

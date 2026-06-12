@@ -4,6 +4,7 @@
   system ? builtins.currentSystem,
   compiler ? null,
   static ? false,
+  devTools ? false,
 }:
 let
   pkgs = import ./. {
@@ -13,6 +14,7 @@ let
       compiler
       static
       system
+      devTools
       ;
   };
   feed-repeat = pkgs.feed-repeat;
