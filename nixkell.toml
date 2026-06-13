@@ -6,8 +6,8 @@
 # you will most likely have to compile *everything* yourself.
 version = "9.10"
 optimise = true
-# profiling = false
-# benchmark = false
+profiling = false
+benchmark = false
 
 # List of tools to be available in the nix shell
 [env]

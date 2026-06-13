@@ -16,10 +16,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Configurable `User-Agent` header via `--user-agent` CLI option.
 - Configurable service username in the NixOS module via the `userName` option.
 - A GitHub Action workflow to generate and host the generated feeds on GitHub Pages.
+- `devTools` parameter throughout the Nix build files for faster Nix shell builds without HLS and other dev tools.
 
 ### Changed
 - Cache files are now per-task instead of per-source, enabling different `saveSourceFeedEntries` per task for the same source URL. Old cache files are migrated automatically to the new file names.
 - Credentials embedded in source feed URLs (e.g., `https://token@host/feed`) are now redacted from all log output.
+- Explicit dependency version bounds.
+- Minimum supported GHC version is now 9.10 (Cabal 3.12+), no support for GHC 9.6 and 9.8.
 
 ### Fixed
 - HTTP retry for server errors — retry logic was previously broken because 5xx exceptions bypassed the retry loop. Server errors are now properly retried with exponential backoff.

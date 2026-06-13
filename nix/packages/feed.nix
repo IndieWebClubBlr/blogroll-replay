@@ -19,6 +19,7 @@ mkDerivation {
     test-framework test-framework-hunit text time xml-conduit xml-types
   ];
   testToolDepends = [ doctest-driver-gen markdown-unlit ];
+  jailbreak = true;
   doHaddock = false;
   doCheck = false;
   hyperlinkSource = false;

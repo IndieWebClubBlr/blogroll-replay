@@ -25,6 +25,9 @@ let
 
   ghcVer = "ghc" + util.removeChar "." ghcVersion;
 
+  # Only GHC ≥ 9.10 is supported (ships Cabal ≥ 3.12, needed for PackageInfo_*)
+  ghcSupported = lib.versionAtLeast ghcVersion "9.10";
+
   hlib = pkgs.haskell.lib.compose;
 
   # usual non-Haskell dependency libraries of static exectables
@@ -67,7 +70,13 @@ let
         else
           [ hlib.disableOptimization ]
       )
-      ++ lib.optional (usingOr "profiling" false) hlib.enableExecutableProfiling
+      ++ (if ((usingOr "profiling" false) && (!static)) then [
+            hlib.enableExecutableProfiling
+            hlib.enableLibraryProfiling
+          ] else [
+            hlib.disableExecutableProfiling
+            hlib.disableLibraryProfiling
+          ])
       ++ lib.optional (usingOr "benchmark" false) hlib.doBenchmark
       ++ lib.optional pkgs.stdenv.isAarch64 (
         hlib.appendConfigureFlag "--ghc-option=-fwhole-archive-hs-libs"
@@ -168,6 +177,7 @@ let
 
   scripts = import ./scripts.nix { inherit pkgs; lib = pkgs.lib; };
 in
+assert ghcSupported || abort "feed-repeat requires GHC ≥ 9.10 (got ${ghcVersion}).";
 {
   bin = (if static then util.compressExes else (x: x)) ourHaskell.feed-repeat;
 

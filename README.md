@@ -38,7 +38,7 @@ A Haskell tool that repeats entries from RSS/Atom feeds into new feeds. It fetch
 
 This project is written in [Haskell](https://www.haskell.org/). You don't need Haskell experience to use this tool, but you'll need the Haskell compiler and build tools installed to build it.
 
-The easiest way to install Haskell is via [GHCup](https://www.haskell.org/ghcup/). Run GHCup to install GHC (9.10+) and Cabal (3.4+). Alternatively, check your system's package manager for pre-built packages.
+The easiest way to install Haskell is via [GHCup](https://www.haskell.org/ghcup/). Run GHCup to install GHC (9.10+) and Cabal. Alternatively, check your system's package manager for pre-built packages.
 
 [Nix](https://nixos.org) is optional. It is required for `nix` builds and NixOS module support.
 
