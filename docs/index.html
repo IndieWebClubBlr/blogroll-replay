@@ -88,9 +88,17 @@
     code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
   </style>
   <link rel="stylesheet" href="light.css" />
+<script>
+  if (location.hostname === "abhin4v.github.io") {
+    location.replace(
+      "https://projects.abhinavsarkar.net/feed-repeat/" +
+      location.pathname.replace(/^\/feed-repeat\//, "")
+    );
+  }
+</script>
 </head>
 <body>
-<nav><a href="index.html">Home</a><a href="nix-module-options.html">NixOS Options</a><a href="CHANGELOG.html">Changelog</a><a href="https://github.com/abhin4v/feed-repeat">Source</a></nav>
+<nav><a href="https://projects.abhinavsarkar.net/feed-repeat/">Home</a><a href="https://projects.abhinavsarkar.net/feed-repeat/nix-module-options.html">NixOS Options</a><a href="https://projects.abhinavsarkar.net/feed-repeat/CHANGELOG.html">Changelog</a><a href="https://github.com/abhin4v/feed-repeat">Source</a></nav>
 
 <h1 id="feed-repeat">feed-repeat</h1>
 <p>A Haskell tool that repeats entries from RSS/Atom feeds into new
@@ -340,7 +348,7 @@ example configurations are provided for Nginx, Apache, and Caddy in the
 <p>You can run and host <code>feed-repeat</code> on GitHub Actions and
 Pages: fork this repo, edit <code>config.yaml</code>, and let GitHub
 Actions publish your repeated feeds to GitHub Pages. See the full <a
-href="https://abhin4v.github.io/feed-repeat/hosting-on-github-pages.html">Hosting
+href="https://projects.abhinavsarkar.net/feed-repeat/hosting-on-github-pages.html">Hosting
 on GitHub Pages guide</a> for the step-by-step setup.</p>
 <h2 id="cli-usage">CLI Usage</h2>
 <div class="sourceCode" id="cb18"><pre
@@ -399,6 +407,6 @@ reason.</p>
 <p>This is a personal project. The views, code, and opinions expressed
 here are my own and do not represent those of my current or past
 employers.</p>
-<footer>Made with <a href="https://www.haskell.org/">Haskell</a> by <a href="https://abhinavsarkar.net/">Abhinav Sarkar</a></footer>
+<footer>Made with <a href="https://www.haskell.org/">Haskell</a> by <a href="https://projects.abhinavsarkar.net/">Abhinav Sarkar</a></footer>
 </body>
 </html>

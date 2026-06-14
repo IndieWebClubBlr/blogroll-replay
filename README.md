@@ -275,7 +275,7 @@ To serve the output feeds publicly, you can use any web server. Basic example co
 
 ### Hosting on GitHub Pages
 
-You can run and host `feed-repeat` on GitHub Actions and Pages: fork this repo, edit `config.yaml`, and let GitHub Actions publish your repeated feeds to GitHub Pages. See the full [Hosting on GitHub Pages guide](https://abhin4v.github.io/feed-repeat/hosting-on-github-pages.html) for the step-by-step setup.
+You can run and host `feed-repeat` on GitHub Actions and Pages: fork this repo, edit `config.yaml`, and let GitHub Actions publish your repeated feeds to GitHub Pages. See the full [Hosting on GitHub Pages guide](https://projects.abhinavsarkar.net/feed-repeat/hosting-on-github-pages.html) for the step-by-step setup.
 
 ## CLI Usage
 

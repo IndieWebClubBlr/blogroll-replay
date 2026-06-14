@@ -3,6 +3,7 @@
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
+DOCS_BASE="https://projects.abhinavsarkar.net/feed-repeat"
 mkdir -p docs
 touch docs/.nojekyll
 
@@ -29,8 +30,13 @@ done
 
 # Add navigation bar to all pages (after <body>)
 for f in docs/index.html docs/CHANGELOG.html docs/hosting-on-github-pages.html docs/nix-module-options.html; do
-  sed -i "s#<body>#<body>\n<nav><a href=\"index.html\">Home</a><a href=\"nix-module-options.html\">NixOS Options</a><a href=\"CHANGELOG.html\">Changelog</a><a href=\"https://github.com/abhin4v/feed-repeat\">Source</a></nav>\n#" "$f"
-  sed -i "s#</body>#<footer>Made with <a href=\"https://www.haskell.org/\">Haskell</a> by <a href=\"https://abhinavsarkar.net/\">Abhinav Sarkar</a></footer>\n</body>#" "$f"
+  sed -i "s#<body>#<body>\n<nav><a href=\"${DOCS_BASE}/\">Home</a><a href=\"${DOCS_BASE}/nix-module-options.html\">NixOS Options</a><a href=\"${DOCS_BASE}/CHANGELOG.html\">Changelog</a><a href=\"https://github.com/abhin4v/feed-repeat\">Source</a></nav>\n#" "$f"
+  sed -i "s#</body>#<footer>Made with <a href=\"https://www.haskell.org/\">Haskell</a> by <a href=\"https://projects.abhinavsarkar.net/\">Abhinav Sarkar</a></footer>\n</body>#" "$f"
+done
+
+# Add JS redirect from abhin4v.github.io to projects.abhinavsarkar.net
+for f in docs/index.html docs/CHANGELOG.html docs/hosting-on-github-pages.html docs/nix-module-options.html; do
+  sed -i 's#</head>#<script>\n  if (location.hostname === "abhin4v.github.io") {\n    location.replace(\n      "'"${DOCS_BASE}"'/" +\n      location.pathname.replace(/^\\/feed-repeat\\//, "")\n    );\n  }\n</script>\n</head>#' "$f"
 done
 
 echo "Site built in docs/"
