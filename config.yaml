@@ -1,23 +1,23 @@
 # feed-repeat configuration
 # This file contains a list of feed tasks, each with its own source and output settings.
 
-- sourceFeedUrl: "https://abhinavsarkar.net/linkblog/feed.atom"
+- sourceFeedUrl: "https://blr.indiewebclub.org/blogroll.atom"
   # URL of the RSS or Atom feed to fetch entries from (required, string)
 
-  outputFilename: "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+  outputFilename: "blogroll-replay"
   # Base filename for the output Atom feed file. The .atom extension is added automatically. (required, string)
   # Use unique identifiers or descriptive names to avoid filename collisions.
 
-  saveSourceFeedEntries: false
+  saveSourceFeedEntries: true
   # Whether to save the source feed entries. (required, boolean)
   # Set to true for feeds that keep removing entries over time.
   # Set to false for feeds that always return all their entries.
 
-  repeatedEntryCount: 3
+  repeatedEntryCount: 5
   # Number of entries to randomly select for repetition on each run. (required, integer >= 0)
   # Recommended range: 1-5. Higher values will repeat more entries.
 
-  minimumEntryAgeDays: 7
+  minimumEntryAgeDays: 30
   # Minimum age in days for entries to be eligible for selection. (required, integer >= 0)
   # Entries newer than this are filtered out. Recommended: 7+ days to avoid repeating recent content.
 
@@ -31,18 +31,12 @@
   # When set, ensures diversity by limiting count of entries coming from one domains.
   # Example: set to 1 to ensure at most one entry per domain is selected.
 
-  selectionAlpha: 0.5
+  selectionAlpha: 1
   # Controls how strongly the weighted selection favors older entries. (optional, double >= 0, default: 1)
   # Higher values make older entries much more likely to be selected.
   # Set to 0 for uniform random selection regardless of age.
 
-  passthroughNewEntries: true
+  passthroughNewEntries: false
   # Whether to passthrough new entries in the input feed. (optional, default: false)
   # Set to true to get repeated as well as new entries in the output feed.
   # Set to false to get only repeated entries in the output feed.
-
-- sourceFeedUrl: "https://abhinavsarkar.net/blogroll/feed.atom"
-  outputFilename: "z9y8x7w6v5u4t3s2r1q0p9o8n7m6l5k4"
-  saveSourceFeedEntries: true
-  repeatedEntryCount: 1
-  minimumEntryAgeDays: 14
