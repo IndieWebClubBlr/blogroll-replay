@@ -222,17 +222,20 @@ processSourceFeed task mOutputFeed (sourceFeed, newEntries') = do
     then logWarn "Selected no new entries or entries for repetition"
     else do
       logDebug $ "Selected " <> show (length selectedEntries) <> " entries for repetition"
-      logDebug $ "Got " <> show (length newEntries) <> " new entries"
+      when task.passthroughNewEntries $
+        logDebug ("Got " <> show (length newEntries) <> " new entries")
 
       -- merge entries
       let outputFeedEntries = maybe [] Atom.feedEntries mOutputFeed
       let combinedEntries = newEntries <> selectedEntries <> outputFeedEntries
       logDebug $
-        "Combined entries: "
-          <> (show (length newEntries) <> " new + ")
-          <> (show (length selectedEntries) <> " repeated + ")
-          <> (show (length outputFeedEntries) <> " existing = ")
-          <> show (length combinedEntries)
+        unwords
+          [ "Combined entries:",
+            if task.passthroughNewEntries then show (length newEntries) <> " new +" else "\b",
+            show (length selectedEntries) <> " repeated +",
+            show (length outputFeedEntries) <> " existing =",
+            show (length combinedEntries)
+          ]
 
       -- create new output feed
       let resultFeed =
