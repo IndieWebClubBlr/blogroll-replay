@@ -140,7 +140,8 @@ runTasksForSource tasks sourceFeedUrl = do
       let minRunGapSeconds = fromIntegral task.minRunGapDays.toNum * Time.nominalDay - timerTolerance
       if Time.diffUTCTime env.startTime outputFeedUpdated < minRunGapSeconds
         then do
-          logInfo $ "Skipping run for URL: " <> sourceFeedUrl.redacted
+          outputPath <- outputFilePath task
+          logInfo $ "Skipping run for output:" <> outputPath <> " URL: " <> sourceFeedUrl.redacted
           return Nothing
         else do
           cachePath <- cacheFilePath task
@@ -176,8 +177,7 @@ runTasksForSource tasks sourceFeedUrl = do
         return Nothing
 
     mParseOutputFile task = do
-      env <- ask
-      let outputPath = env.options.outputDir </> task.outputFilename <> ".atom"
+      outputPath <- outputFilePath task
 
       (Just . (task,) . Just <$> parseAtomFile outputPath) -- file parses, task runs
         `catchError` \case
@@ -222,17 +222,20 @@ processSourceFeed task mOutputFeed (sourceFeed, newEntries') = do
     then logWarn "Selected no new entries or entries for repetition"
     else do
       logDebug $ "Selected " <> show (length selectedEntries) <> " entries for repetition"
-      logDebug $ "Got " <> show (length newEntries) <> " new entries"
+      when task.passthroughNewEntries $
+        logDebug ("Got " <> show (length newEntries) <> " new entries")
 
       -- merge entries
       let outputFeedEntries = maybe [] Atom.feedEntries mOutputFeed
       let combinedEntries = newEntries <> selectedEntries <> outputFeedEntries
       logDebug $
-        "Combined entries: "
-          <> (show (length newEntries) <> " new + ")
-          <> (show (length selectedEntries) <> " repeated + ")
-          <> (show (length outputFeedEntries) <> " existing = ")
-          <> show (length combinedEntries)
+        unwords
+          [ "Combined entries:",
+            if task.passthroughNewEntries then show (length newEntries) <> " new +" else "\b",
+            show (length selectedEntries) <> " repeated +",
+            show (length outputFeedEntries) <> " existing =",
+            show (length combinedEntries)
+          ]
 
       -- create new output feed
       let resultFeed =
@@ -245,7 +248,7 @@ processSourceFeed task mOutputFeed (sourceFeed, newEntries') = do
       let url = task.sourceFeedUrl
       content <-
         fromMaybeOrThrow (FeedRenderError url.redacted) . Feed.textFeed $ Feed.AtomFeed resultFeed
-      let outputPath = env.options.outputDir </> task.outputFilename <> ".atom"
+      outputPath <- outputFilePath task
       writeFile outputPath content
       logDebug $ "Wrote to: " <> outputPath
       logInfo $ "Processed " <> url.redacted <> " successfully"
@@ -268,6 +271,11 @@ cacheFilePath :: FeedTask -> App FilePath
 cacheFilePath task = do
   env <- ask
   return $ env.options.cacheDir </> cacheFileName task.sourceFeedUrl task.outputFilename
+
+outputFilePath :: FeedTask -> App FilePath
+outputFilePath task = do
+  env <- ask
+  return $ env.options.outputDir </> task.outputFilename <> ".atom"
 
 cacheSourceFeed :: FeedTask -> Maybe Atom.Feed -> Either AppError Atom.Feed -> App (Atom.Feed, [Atom.Entry])
 cacheSourceFeed task mSourceFeed eCachedFeed = do
