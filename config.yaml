@@ -4,7 +4,7 @@
 - sourceFeedUrl: "https://blr.indiewebclub.org/blogroll.atom"
   # URL of the RSS or Atom feed to fetch entries from (required, string)
 
-  outputFilename: "blogroll-replay"
+  outputFilename: "feed"
   # Base filename for the output Atom feed file. The .atom extension is added automatically. (required, string)
   # Use unique identifiers or descriptive names to avoid filename collisions.
 
