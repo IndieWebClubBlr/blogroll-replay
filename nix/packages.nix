@@ -32,7 +32,6 @@ let
 
   # usual non-Haskell dependency libraries of static exectables
   # you may need to add more of these if your code depends on them
-  gmp6 = pkgs.gmp6.override { withStatic = true; };
   libffi = pkgs.libffi.overrideAttrs (old: {
     dontDisableStatic = true;
   });
@@ -70,13 +69,18 @@ let
         else
           [ hlib.disableOptimization ]
       )
-      ++ (if ((usingOr "profiling" false) && (!static)) then [
+      ++ (
+        if ((usingOr "profiling" false) && (!static)) then
+          [
             hlib.enableExecutableProfiling
             hlib.enableLibraryProfiling
-          ] else [
+          ]
+        else
+          [
             hlib.disableExecutableProfiling
             hlib.disableLibraryProfiling
-          ])
+          ]
+      )
       ++ lib.optional (usingOr "benchmark" false) hlib.doBenchmark
       ++ lib.optional pkgs.stdenv.isAarch64 (
         hlib.appendConfigureFlag "--ghc-option=-fwhole-archive-hs-libs"
@@ -95,7 +99,6 @@ let
           "--with-ld=ld.gold"
           "--ghc-option=-optl=-static"
           "--ghc-option=-optl=-pthread"
-          "--extra-lib-dirs=${gmp6}/lib"
           "--extra-lib-dirs=${libffi}/lib"
           "--extra-lib-dirs=${ncurses}/lib"
           "--extra-lib-dirs=${zlib}/lib"
@@ -135,21 +138,29 @@ let
     let
       depsFromDir = hlib.packagesFromDirectory { directory = ./packages; };
 
-      manual = hfinal: hprev: {
-        cabal-install = patch hprev.cabal-install [ ./patches/prevent_missing_index_error.patch ];
+      manual =
+        hfinal: hprev:
+        {
+          cabal-install = patch hprev.cabal-install [ ./patches/prevent_missing_index_error.patch ];
 
-        feed-repeat =
-          let
-            cleanSource = util.filterSrc {
-              path = ../.; # Root of the project
-              files = conf.ignore.files;
-              paths = conf.ignore.paths;
-            };
-          in
-          confPkg (hprev.callCabal2nix "feed-repeat" cleanSource { });
-      } // lib.optionalAttrs devTools {
-        haskell-language-server = hlsDisablePlugins hprev.haskell-language-server conf.hls.disable_plugins;
-      };
+          feed-repeat =
+            let
+              cleanSource = util.filterSrc {
+                path = ../.; # Root of the project
+                files = conf.ignore.files;
+                paths = conf.ignore.paths;
+              };
+            in
+            confPkg (hprev.callCabal2nix "feed-repeat" cleanSource { });
+        }
+        // lib.optionalAttrs devTools {
+          haskell-language-server = hlsDisablePlugins hprev.haskell-language-server conf.hls.disable_plugins;
+        }
+        // lib.optionalAttrs static {
+          crypton = hprev.crypton.overrideAttrs (oldAttrs: {
+            configureFlags = oldAttrs.configureFlags ++ [ "-f-integer-gmp" ];
+          });
+        };
     in
     pkgs.haskell.packages.${ghcVer}.extend (
       lib.composeManyExtensions [
@@ -169,13 +180,16 @@ let
   );
 
   # Compile haskell tools with ourHaskell to ensure compatibility
-  haskellTools = lib.optionals devTools (builtins.map (
-    p: ourHaskell.${lib.removePrefix "haskellPackages." p}
-  ) conf.env.haskell_tools);
+  haskellTools = lib.optionals devTools (
+    builtins.map (p: ourHaskell.${lib.removePrefix "haskellPackages." p}) conf.env.haskell_tools
+  );
 
   tools = lib.optionals devTools (builtins.map util.getDrv conf.env.tools);
 
-  scripts = import ./scripts.nix { inherit pkgs; lib = pkgs.lib; };
+  scripts = import ./scripts.nix {
+    inherit pkgs;
+    lib = pkgs.lib;
+  };
 in
 assert ghcSupported || abort "feed-repeat requires GHC ≥ 9.10 (got ${ghcVersion}).";
 {
@@ -196,7 +210,6 @@ assert ghcSupported || abort "feed-repeat requires GHC ≥ 9.10 (got ${ghcVersio
           ghc
           ourHaskell.buildHaskellPackages.jailbreak-cabal
           pkgs.cabal2nix-unwrapped
-          gmp6
           libffi
           ncurses
           zlib

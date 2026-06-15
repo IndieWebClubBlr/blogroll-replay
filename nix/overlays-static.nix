@@ -23,6 +23,7 @@ in
           enableDwarf = false;
           enableProfiledLibs = false;
           enableDocs = false;
+          enableNativeBignum = true;
         };
         buildHaskellPackages = prevHPackages.buildHaskellPackages.override (old: {
           ghc = final.haskell.packages.${compiler}.ghc;
