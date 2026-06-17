@@ -8,12 +8,12 @@ let
   '';
   build = pkgs.writeShellScriptBin "build" ''
     set -euo pipefail
-    nix-build nix/release.nix
+    nom-build nix/release.nix
   '';
   build-static = pkgs.writeShellScriptBin "build-static" ''
     set -euo pipefail
     [[ $# -eq 1 ]] || { echo "Usage: build-static <arch>" >&2; exit 1; }
-    nix-build nix/release.nix --arg static true --argstr system "$1-linux"
+    nom-build nix/release.nix --arg static true --argstr system "$1-linux"
     # add Nix GC root for static dependencies and build tools
     nix-store --add-root .gcroots/static-deps-$1 \
       --realise `nix-instantiate --argstr system "$1-linux" --quiet --quiet --quiet nix/static-deps.nix` \
@@ -26,7 +26,7 @@ let
   build-docker = pkgs.writeShellScriptBin "build-docker" ''
     set -euo pipefail
     [[ $# -eq 1 ]] || { echo "Usage: build-docker <arch>" >&2; exit 1; }
-    nix-build nix/docker.nix --argstr system "$1-linux"
+    nom-build nix/docker.nix --argstr system "$1-linux"
   '';
   module-doc =
     serviceName:
