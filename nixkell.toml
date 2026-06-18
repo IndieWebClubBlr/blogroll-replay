@@ -25,7 +25,8 @@ tools = [
   "cabal2nix",
   "nil",
   "niv",
-  "nixfmt"
+  "nixfmt",
+  "nix-output-monitor"
 ]
 
 # List of plugins the you don't want to build
