@@ -13,7 +13,7 @@
   # Set to true for feeds that keep removing entries over time.
   # Set to false for feeds that always return all their entries.
 
-  repeatedEntryCount: 5
+  repeatedEntryCount: 10
   # Number of entries to randomly select for repetition on each run. (required, integer >= 0)
   # Recommended range: 1-5. Higher values will repeat more entries.
 
