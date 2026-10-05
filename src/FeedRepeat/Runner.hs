@@ -170,11 +170,7 @@ runTasksForSource tasks sourceFeedUrl = do
 processSourceFeed :: (MonadApp m) => FeedTask -> Maybe Atom.Feed -> (Atom.Feed, [Atom.Entry]) -> m ()
 processSourceFeed task mOutputFeed (sourceFeed, newEntries') = do
   -- merge source and output feeds
-  mergedFeed <- case mOutputFeed of
-    Nothing -> return sourceFeed
-    Just outputFeed -> return $ mergeFeeds sourceFeed outputFeed
-
-  let allEntries = Atom.feedEntries mergedFeed
+  let allEntries = selectionPool sourceFeed mOutputFeed
   logDebug $ "Merged feed has " <> show (length allEntries) <> " entries"
 
   -- select entries

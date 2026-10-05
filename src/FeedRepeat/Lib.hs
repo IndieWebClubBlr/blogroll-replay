@@ -5,6 +5,7 @@ module FeedRepeat.Lib
   ( checkPublicUrl,
     feedToAtom,
     mergeFeeds,
+    selectionPool,
     selectEntries,
     computeNewEntries,
     mkUuidUrn,
@@ -153,6 +154,14 @@ mergeFeeds feed1 feed2 =
   let allEntries = Atom.feedEntries feed1 <> Atom.feedEntries feed2
       uniqueEntries = nubOrdOn getItemLinkOrId allEntries
    in feed1 {Atom.feedEntries = sortBy (comparing (Down . Atom.entryUpdated)) uniqueEntries}
+
+selectionPool :: Atom.Feed -> Maybe Atom.Feed -> [Atom.Entry]
+selectionPool sourceFeed mOutputFeed = Atom.feedEntries $ case mOutputFeed of
+  Nothing -> sourceFeed
+  -- the output feed's copy of an entry must win the dedup: its 'updated' is the
+  -- last repeat time (set by resetEntryId), which is what selectEntries' age
+  -- check compares against minimumEntryAgeDays
+  Just outputFeed -> mergeFeeds outputFeed sourceFeed
 
 selectEntries :: (MonadIO m) => FeedTask -> UTCTime -> [Atom.Entry] -> [Atom.Entry] -> m [Atom.Entry]
 selectEntries task now entries newEntries = do
