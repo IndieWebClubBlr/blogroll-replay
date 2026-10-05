@@ -1,25 +1,22 @@
 module Main where
 
 import Control.Exception (IOException, displayException, throwIO, try)
-import Control.Monad (forM, forM_, unless, when)
-import Control.Monad.Except (runExceptT)
-import Control.Monad.Logger (LogLevel (..), filterLogger, runStdoutLoggingT)
-import Control.Monad.Reader (runReaderT)
+import Control.Monad (filterM, unless, (>=>))
 import Data.Foldable (traverse_)
-import Data.List (isPrefixOf, nub, (\\))
-import Data.List.Extra (nubOrd)
-import Data.Maybe (catMaybes)
+import Data.Function ((&))
+import Data.List (isPrefixOf)
 import Data.Text qualified as T
 import Data.Time qualified as Time
 import Data.Version (showVersion)
 import Data.Yaml qualified as Yaml
 import FeedRepeat.Lib
 import FeedRepeat.Runner
+import FeedRepeat.Types
 import Network.HTTP.Client qualified as HTTP
 import Network.HTTP.Client.TLS qualified as HTTP
 import Options.Applicative qualified as Opt
 import PackageInfo_feed_repeat qualified as PI
-import System.Directory (canonicalizePath, copyFile, createDirectoryIfMissing, doesFileExist, removeFile)
+import System.Directory (canonicalizePath, createDirectoryIfMissing)
 import System.Exit (exitFailure)
 import System.FilePath (splitDirectories, (<.>), (</>))
 import Prelude hiding (writeFile)
@@ -113,77 +110,33 @@ run env =
     Right tasks | null tasks -> logErrorIO "No tasks found in file" >> exitFailure
     Right tasks ->
       validateTasks env.options.outputDir tasks >>= \case
-        Nothing -> exitFailure
-        Just validated
+        [] -> logErrorIO "No valid tasks found" >> exitFailure
+        validated
           | env.options.validateOnly ->
               unless env.options.quiet $ do
                 logInfoIO $ "Config valid: " <> show (length validated) <> " tasks"
-          | otherwise -> do
-              migrateCacheFile env.options.cacheDir validated
-              runStdoutLoggingT
-                . filterLogger enableLogging
-                . flip runReaderT env
-                $ runTasks validated
-  where
-    runTasks tasks = forM_ (nubOrd $ map sourceFeedUrl tasks) $ \url ->
-      runExceptT (runTasksForSource (filter ((== url) . sourceFeedUrl) tasks) url) >>= \case
-        Left err -> logError $ show err
-        Right _ -> return ()
+        validated ->
+          runAllTasks validated
+            & runApp env
+            >>= either (logErrorIO . show) pure
 
-    enableLogging _ level
-      | env.options.quiet = level >= LevelWarn
-      | env.options.verbose = True
-      | otherwise = level >= LevelInfo
+validateTasks :: FilePath -> [FeedTask] -> IO [FeedTask]
+validateTasks outputDir =
+  validateSsrf
+    >=> validateOutputPaths outputDir
+    >=> checkDuplicateOutputs
 
-migrateCacheFile :: FilePath -> [FeedTask] -> IO ()
-migrateCacheFile cacheDir tasks = do
-  let sourceFeedUrls = nubOrd $ map sourceFeedUrl tasks
-  forM_ sourceFeedUrls $ \url -> do
-    let oldFileName = cacheDir </> oldCacheFileName url
-        tasksWithSource = [t | t <- tasks, t.sourceFeedUrl == url]
-    doesFileExist oldFileName >>= \case
-      False -> return ()
-      True -> do
-        results <- forM tasksWithSource $ \task -> do
-          let newFileName = cacheDir </> cacheFileName task.sourceFeedUrl task.outputFilename
-          newFileExists <- doesFileExist newFileName
-          if newFileExists
-            then return True
-            else
-              try (copyFile oldFileName newFileName) >>= \case
-                Left (e :: IOException) -> do
-                  logWarnIO $ "Cache migration failed for " <> oldFileName <> ": " <> displayException e
-                  return False
-                Right _ -> do
-                  logInfoIO $ "Migrated cache file: " <> oldFileName <> " to " <> newFileName
-                  return True
-        when (and results) $
-          try (removeFile oldFileName) >>= \case
-            Right () -> return ()
-            Left (e :: IOException) -> do
-              logWarnIO $ "Failed to remove old cache file " <> oldFileName <> ": " <> displayException e
+validateSsrf :: [FeedTask] -> IO [FeedTask]
+validateSsrf tasks = flip filterM tasks $ \task -> do
+  public <- checkPublicUrl task.sourceFeedUrl.toString
+  unless public $ do
+    logErrorIO $ "Private source feed URL found: " <> task.sourceFeedUrl.redacted
+  return public
 
-validateTasks :: FilePath -> [FeedTask] -> IO (Maybe [FeedTask])
-validateTasks outputDir tasks = do
-  tasks <- fmap catMaybes . forM tasks $ \task ->
-    checkPublicUrl task.sourceFeedUrl.toString >>= \case
-      True -> do
-        outputFP <- canonicalizePath $ outputDir </> task.outputFilename <.> "atom"
-        if splitDirectories outputDir `isPrefixOf` splitDirectories outputFP
-          then return $ Just task
-          else do
-            logErrorIO $ "Output file is outside output directory: " <> outputFP
-            return Nothing
-      False -> do
-        logErrorIO $ "Private source feed URL found: " <> task.sourceFeedUrl.redacted
-        return Nothing
-
-  -- Check for duplicate output filenames
-  let outputFilenames = map outputFilename tasks
-  let duplicates = outputFilenames \\ nub outputFilenames
-  if not (null duplicates)
-    then do
-      logErrorIO "Duplicate output filenames found:"
-      forM_ (nub duplicates) (logErrorIO . ("  " <>))
-      return Nothing
-    else return $ if null tasks then Nothing else Just tasks
+validateOutputPaths :: FilePath -> [FeedTask] -> IO [FeedTask]
+validateOutputPaths outputDir tasks = flip filterM tasks $ \task -> do
+  outputFP <- canonicalizePath $ outputDir </> task.outputFilename <.> "atom"
+  let valid = splitDirectories outputDir `isPrefixOf` splitDirectories outputFP
+  unless valid $ do
+    logErrorIO $ "Output file is outside output directory: " <> outputFP
+  return valid

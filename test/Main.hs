@@ -8,6 +8,7 @@ import Data.Text qualified as T
 import Data.Time (UTCTime)
 import Data.Time.Format.ISO8601 (iso8601ParseM)
 import FeedRepeat.Lib
+import FeedRepeat.Types
 import SsrfSpec (ssrfSpec)
 import Test.Hspec
 import Test.QuickCheck hiding (NonNegative)
@@ -255,6 +256,53 @@ main = hspec $ do
               }
           merged = mergeFeeds feed1 feed2
       Atom.feedId merged `shouldBe` "feed1"
+
+    it "keeps the entry from the first feed when links collide" $ do
+      let entry1 =
+            (Atom.nullEntry "id1" (Atom.TextString "entry1") "2025-11-22T10:00:00Z")
+              { Atom.entryLinks = [(Atom.nullLink "http://example.com/1") {Atom.linkRel = Just $ Left "alternate"}]
+              }
+          entry2 =
+            (Atom.nullEntry "id2" (Atom.TextString "entry1-duplicate") "2025-11-22T09:00:00Z")
+              { Atom.entryLinks = [(Atom.nullLink "http://example.com/1") {Atom.linkRel = Just $ Left "alternate"}]
+              }
+          feed1 =
+            (Atom.nullFeed "feed1" (Atom.TextString "Feed 1") "2025-11-22T10:00:00Z")
+              { Atom.feedEntries = [entry1]
+              }
+          feed2 =
+            (Atom.nullFeed "feed2" (Atom.TextString "Feed 2") "2025-11-22T10:00:00Z")
+              { Atom.feedEntries = [entry2]
+              }
+          merged = mergeFeeds feed1 feed2
+      map Atom.entryId (Atom.feedEntries merged) `shouldBe` ["id1"]
+      map Atom.entryUpdated (Atom.feedEntries merged) `shouldBe` ["2025-11-22T10:00:00Z"]
+
+  describe "selectionPool" $ do
+    it "does not select an entry again until minimumEntryAgeDays since its last repeat" $ do
+      let sourceEntry =
+            (Atom.nullEntry "src" (Atom.TextString "post") "2015-10-19T20:26:00Z")
+              { Atom.entryLinks = [(Atom.nullLink "http://example.com/post") {Atom.linkRel = Just $ Left "alternate"}]
+              }
+          repeatedEntry =
+            (Atom.nullEntry "repeat" (Atom.TextString "post") "2025-05-31T10:00:00Z")
+              { Atom.entryLinks = [(Atom.nullLink "http://example.com/post") {Atom.linkRel = Just $ Left "alternate"}]
+              }
+          sourceFeed =
+            (Atom.nullFeed "source" (Atom.TextString "Source") "2025-06-01T00:00:00Z")
+              { Atom.feedEntries = [sourceEntry]
+              }
+          outputFeed =
+            (Atom.nullFeed "output" (Atom.TextString "Output") "2025-06-01T00:00:00Z")
+              { Atom.feedEntries = [repeatedEntry]
+              }
+          task = mkTask 10 30 Nothing
+      -- the entry is old enough when only the source feed is known ...
+      alone <- selectEntries task farFutureNow (selectionPool sourceFeed Nothing) []
+      map Atom.entryId alone `shouldBe` ["src"]
+      -- ... but not once the output feed records that it was repeated yesterday
+      fromPool <- selectEntries task farFutureNow (selectionPool sourceFeed (Just outputFeed)) []
+      map Atom.entryId fromPool `shouldBe` []
 
   describe "selectEntries" $ do
     it "returns empty list when entries list is empty" $ do

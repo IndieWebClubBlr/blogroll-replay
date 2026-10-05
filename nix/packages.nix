@@ -95,19 +95,19 @@ let
           buildTools = (old.buildTools or [ ]) ++ [ pkgsOrig.buildPackages.lld ];
         }))
         (hlib.appendConfigureFlags [
-          "--ghc-option=-fPIC"
-          "--ghc-option=-split-sections"
-          "--ghc-option=-optl-fuse-ld=lld"
-          "--ld-option=-fuse-ld=lld"
-          "--ld-option=-Wl,--gc-sections,--build-id,--icf=all"
-          "--with-ld=ld.lld"
-          "--ghc-option=-optl=-static"
-          "--ghc-option=-optl=-pthread"
-          "--extra-lib-dirs=${libffi}/lib"
-          "--extra-lib-dirs=${ncurses}/lib"
-          "--extra-lib-dirs=${zlib}/lib"
-          "--extra-lib-dirs=${numactl}/lib"
-        ])
+        "--ghc-option=-fPIC"
+        "--ghc-option=-split-sections"
+        "--ghc-option=-optl-fuse-ld=lld"
+        "--ld-option=-fuse-ld=lld"
+        "--ld-option=-Wl,--gc-sections,--build-id,--icf=all"
+        "--with-ld=ld.lld"
+        "--ghc-option=-optl=-static"
+        "--ghc-option=-optl=-pthread"
+        "--extra-lib-dirs=${libffi}/lib"
+        "--extra-lib-dirs=${ncurses}/lib"
+        "--extra-lib-dirs=${zlib}/lib"
+        "--extra-lib-dirs=${numactl}/lib"
+      ])
       ];
     in
     lib.pipe pkg confFns;
